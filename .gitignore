@@ -1,0 +1,7 @@
+# 忽略超大媒体/二进制文件
+testmedia/*.y4m
+testmedia/*.yuv
+bin/peerconnection_serverless.origin*
+# 之前的Python忽略规则保留
+__pycache__/
+*.pyc
