@@ -1,0 +1,54 @@
+{
+    "serverless_connection": {
+        "autoclose": 60,
+        "sender": {
+            "enabled": false
+        },
+        "receiver": {
+            "enabled": true,
+            "listening_ip": "0.0.0.0",
+            "listening_port": 8000
+        }
+    },
+    "bwe_feedback_duration": 200,
+    "video_source": {
+        "video_disabled": {
+            "enabled": true
+        },
+        "webcam": {
+            "enabled": false
+        },
+        "video_file": {
+            "enabled": false,
+            "height": 720,
+            "width": 1080,
+            "fps": 60,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.y4m"
+        }
+    },
+    "audio_source": {
+        "microphone": {
+            "enabled": false
+        },
+        "audio_file": {
+            "enabled": true,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.wav"
+        }
+    },
+    "save_to_file": {
+        "enabled": true,
+        "audio": {
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/PCC_outaudio.wav"
+        },
+        "video": {
+            "width": 720,
+            "height": 1080,
+            "fps": 60,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/PCC_outvideo.y4m"
+        }
+    },
+    "logging": {
+        "enabled": true,
+        "log_output_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/PCC_receiver.log"
+    }
+}
