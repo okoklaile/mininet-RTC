@@ -13,7 +13,10 @@
     "bwe_feedback_duration": 200,
     "video_source": {
         "video_disabled": {
-            "enabled": true
+            "enabled": true,
+            "height": 480,
+            "width": 640,
+            "fps": 60
         },
         "webcam": {
             "enabled": false
@@ -36,7 +39,7 @@
         }
     },
     "save_to_file": {
-        "enabled": true,
+        "enabled": false,
         "audio": {
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/Copa_outaudio.wav"
         },

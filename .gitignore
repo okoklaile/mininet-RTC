@@ -2,6 +2,9 @@
 testmedia/*.y4m
 testmedia/*.yuv
 bin/peerconnection_serverless.origin*
+output/*
+eval_results/*
 # 之前的Python忽略规则保留
 __pycache__/
 *.pyc
+ffmpeg-git-20240629-amd64-static/*

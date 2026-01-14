@@ -1,0 +1,36 @@
+{
+    "type": "video",
+    "downlink": {},
+    "uplink": {
+        "trace_pattern": [
+            {
+                "duration": 20000,
+                "capacity": 1000,
+                "loss": 0,
+                "rtt": 20,
+                "jitter": 0
+            },
+            {
+                "duration": 20000,
+                "capacity": 500,
+                "loss": 0,
+                "rtt": 20,
+                "jitter": 0
+            },
+            {
+                "duration": 20000,
+                "capacity": 2000,
+                "loss": 0,
+                "rtt": 20,
+                "jitter": 0
+            },
+            {
+                "duration": 20000,
+                "capacity": 1000,
+                "loss": 0,
+                "rtt": 20,
+                "jitter": 0
+            }
+        ]
+    }
+}

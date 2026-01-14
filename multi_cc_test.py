@@ -31,7 +31,8 @@ import threading
 # ============================================
 # 所有可用的算法（用于清理旧文件）
 ALL_ALGORITHMS = [
-    'GCC', 'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
+    'GCC', 
+    'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
     'Cubic', 'FARC', 'Gemini', 'HRCC', 'RL-DelayGCC', 'Schaferct',
 ]
 
@@ -39,11 +40,15 @@ ALL_ALGORITHMS = [
 ALGORITHMS = [
     'GCC', 
     'BBR', 
-    'dummy',
+    #'dummy',
     'FARC', 
     #'Gemini', 
     'HRCC', 
     'Schaferct',
+    #'Copa',
+    'Copa+',
+    #'Cubic',
+    #'PCC'
 ]
 
 # 默认网络配置（当没有使用trace时）
@@ -205,6 +210,10 @@ def create_config_for_algorithm(algo, receiver_ip, test_duration, is_receiver=Tr
         config['serverless_connection']['sender']['dest_port'] = PORT
         config['serverless_connection']['autoclose'] = test_duration
         
+        # 配置 sender 端保存文件路径
+        config['save_to_file']['audio']['file_path'] = os.path.join(OUTPUT_DIR, f'{algo}_inaudio.wav')
+        config['save_to_file']['video']['file_path'] = os.path.join(OUTPUT_DIR, f'{algo}_invideo.yuv')
+        
         if config['logging']['enabled']:
             config['logging']['log_output_path'] = os.path.join(OUTPUT_DIR, f'{algo}_sender.log')
         
@@ -252,7 +261,7 @@ def run_multi_cc_test(trace_file=None):
     # 清理旧文件
     info("清理旧的输出文件...\n")
     for algo in ALL_ALGORITHMS:
-        for ext in ['_outaudio.wav', '_outvideo.y4m','_outvideo.yuv', '_receiver.log', '_sender.log']:
+        for ext in ['_outaudio.wav', '_outvideo.y4m', '_outvideo.yuv', '_inaudio.wav', '_invideo.yuv', '_receiver.log', '_sender.log']:
             old_file = os.path.join(OUTPUT_DIR, f'{algo}{ext}')
             if os.path.exists(old_file):
                 try:
@@ -384,7 +393,7 @@ def run_multi_cc_test(trace_file=None):
             proc.wait(timeout=5)
         except:
             proc.kill()
-    
+    os.system('pkill -9 peerconnection_serverless 2>/dev/null')
     net.stop()
     
     info("\n" + "=" * 70 + "\n")
@@ -392,7 +401,12 @@ def run_multi_cc_test(trace_file=None):
     info("=" * 70 + "\n")
     info(f"\n结果文件位于: {OUTPUT_DIR}/\n")
     for algo in ALGORITHMS:
-        info(f"  - {algo}_receiver.log\n")
+        info(f"  [{algo}]\n")
+        info(f"    - {algo}_receiver.log (接收端日志)\n")
+        info(f"    - {algo}_outvideo.yuv (接收端视频)\n")
+        info(f"    - {algo}_outaudio.wav (接收端音频)\n")
+        info(f"    - {algo}_invideo.yuv (发送端视频)\n")
+        info(f"    - {algo}_inaudio.wav (发送端音频)\n")
     info("\n")
 
 

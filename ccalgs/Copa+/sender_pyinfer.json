@@ -13,13 +13,16 @@
     "bwe_feedback_duration": 200,
     "video_source": {
         "video_disabled": {
-            "enabled": false
+            "enabled": true,
+            "height": 480,
+            "width": 640,
+            "fps": 60
         },
         "webcam": {
             "enabled": false
         },
         "video_file": {
-            "enabled": true,
+            "enabled": false,
             "height": 240,
             "width": 320,
             "fps": 10,
@@ -36,9 +39,19 @@
         }
     },
     "save_to_file": {
-        "enabled": false
+        "enabled": true,
+        "audio": {
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/Copa+_inaudio.wav"
+        },
+        "video": {
+            "width": 640,
+            "height": 480,
+            "fps": 60,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/Copa+_invideo.yuv"
+        }
     },
     "logging": {
-        "enabled": false
+        "enabled": false,
+        "log_output_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/sender.log"
     }
 }

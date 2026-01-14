@@ -39,7 +39,16 @@
         }
     },
     "save_to_file": {
-        "enabled": false
+        "enabled": true,
+        "audio": {
+            "file_path": "/home/wyq/桌面/mininet-RTC/output/inaudio.wav"
+        },
+        "video": {
+            "width": 640,
+            "height": 480,
+            "fps": 60,
+            "file_path": "/home/wyq/桌面/mininet-RTC/output/invideo.yuv"
+        }
     },
     "logging": {
         "enabled": false,
