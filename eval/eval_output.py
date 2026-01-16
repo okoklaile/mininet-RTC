@@ -84,10 +84,14 @@ class NetEvalMethodExtension(object):
         
         返回：
         - time_nbytes: 字典 {时间戳: 字节数}
-        - mean_self_inflicted: 平均自致延迟（ms）
-        - mean_delay_95: 95分位延迟（ms）
+        - mean_self_inflicted: 平均自致延迟（ms）- 排除基础延迟后的队列延迟
+        - mean_delay_95: 95分位延迟（ms）- 包含基础网络传播延迟
         - sum_recv_rate: 总接收速率（Mbps）
         - loss_ratio: 丢包率
+        
+        注：
+        - 自致延迟 = 当前延迟 - 最小延迟，反映拥塞造成的队列缓冲延迟
+        - 95分位延迟 = 原始端到端延迟的95百分位数，反映整体延迟水平
         """
         net_data = dst_net_info.net_data
         
@@ -102,10 +106,18 @@ class NetEvalMethodExtension(object):
         
         # 遍历所有网络数据包
         for item in net_data:
-            ssrc = item["packetInfo"]["header"]["ssrc"]
-            sequence_number = item["packetInfo"]["header"]["sequenceNumber"]
-            tmp_delay = item["packetInfo"]["arrivalTimeMs"] - item["packetInfo"]["header"]["sendTimestamp"]
-            timestamp = item["packetInfo"]["arrivalTimeMs"]
+            packet_info = item["packetInfo"]
+            
+            # 适配新的日志结构（字段扁平化）
+            ssrc = packet_info["ssrc"]
+            sequence_number = packet_info["seqNum"]
+            send_time_ms = packet_info["sendTimeMs"]
+            arrival_time_ms = packet_info["arrivalTimeMs"]
+            payload_size = packet_info["payloadSize"]
+            
+            # 计算延迟（如果日志中已包含 delayMs，也可以直接使用）
+            tmp_delay = arrival_time_ms - send_time_ms
+            timestamp = arrival_time_ms
             
             # 初始化该 SSRC 的统计信息
             if ssrc not in ssrc_info:
@@ -113,15 +125,15 @@ class NetEvalMethodExtension(object):
                     "time_delta": -tmp_delay,
                     "delay_list": [],
                     "received_nbytes": 0,
-                    "start_recv_time": item["packetInfo"]["arrivalTimeMs"],
+                    "start_recv_time": arrival_time_ms,
                     "avg_recv_rate": 0,
                 }
             
             # 累计每个时间戳的字节数
             if timestamp not in time_nbytes:
-                time_nbytes[timestamp] = item["packetInfo"]["payloadSize"]
+                time_nbytes[timestamp] = payload_size
             else:
-                time_nbytes[timestamp] += item["packetInfo"]["payloadSize"]
+                time_nbytes[timestamp] += payload_size
 
             # 计算丢包数
             if ssrc in last_seqNo:
@@ -130,10 +142,10 @@ class NetEvalMethodExtension(object):
 
             # 记录延迟和字节数
             ssrc_info[ssrc]["delay_list"].append(ssrc_info[ssrc]["time_delta"] + tmp_delay)
-            ssrc_info[ssrc]["received_nbytes"] += item["packetInfo"]["payloadSize"]
-            if item["packetInfo"]["arrivalTimeMs"] != ssrc_info[ssrc]["start_recv_time"]:
+            ssrc_info[ssrc]["received_nbytes"] += payload_size
+            if arrival_time_ms != ssrc_info[ssrc]["start_recv_time"]:
                 ssrc_info[ssrc]["avg_recv_rate"] = ssrc_info[ssrc]["received_nbytes"] / \
-                    (item["packetInfo"]["arrivalTimeMs"] - ssrc_info[ssrc]["start_recv_time"])
+                    (arrival_time_ms - ssrc_info[ssrc]["start_recv_time"])
         
         # 计算延迟指标
         all_self_inflicted_delays = []
@@ -300,6 +312,11 @@ def save_statistics_report(stats_dict, output_path):
         f.write("拥塞控制算法性能统计报告\n")
         f.write("=" * 80 + "\n\n")
         
+        f.write("延迟指标说明:\n")
+        f.write("  - 自致延迟: 排除基础传播延迟后的队列缓冲延迟（反映拥塞程度）\n")
+        f.write("  - 95分位延迟: 端到端延迟的95百分位数（包含传播+队列延迟）\n")
+        f.write("\n")
+        
         # 按接收速率排序
         sorted_algos = sorted(stats_dict.items(), 
                             key=lambda x: x[1]['recv_rate'], 
@@ -310,8 +327,8 @@ def save_statistics_report(stats_dict, output_path):
             f.write("-" * 60 + "\n")
             f.write(f"  数据包数量:      {stats['packet_count']}\n")
             f.write(f"  接收速率:        {stats['recv_rate']:.3f} Mbps\n")
-            f.write(f"  平均自致延迟:    {stats['avg_delay']:.2f} ms\n")
-            f.write(f"  95分位延迟:      {stats['p95_delay']:.2f} ms\n")
+            f.write(f"  平均自致延迟:    {stats['avg_delay']:.2f} ms (队列延迟)\n")
+            f.write(f"  95分位延迟:      {stats['p95_delay']:.2f} ms (端到端)\n")
             f.write(f"  丢包率:          {stats['loss_ratio']*100:.2f}%\n")
             f.write("\n")
         
@@ -402,8 +419,8 @@ def main():
             duration = (max(timestamps) - min(timestamps)) / 1000.0
             max_duration = max(max_duration, duration)
             
-            print(f"  数据包: {len(net_info.net_data)}, 接收速率: {recv_rate:.3f} Mbps, "
-                  f"平均延迟: {avg_delay:.2f} ms, 丢包率: {loss_ratio*100:.2f}%")
+            print(f"  数据包: {len(net_info.net_data)}, 接收速率: {recv_rate:.3f} Mbps")
+            print(f"  自致延迟(平均): {avg_delay:.2f} ms, 95分位延迟: {p95_delay:.2f} ms, 丢包率: {loss_ratio*100:.2f}%")
             
         except Exception as e:
             print(f"  错误: {e}")

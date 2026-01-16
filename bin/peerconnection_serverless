@@ -15,8 +15,8 @@ import cmdinfer
 def main():
     # Get the absolute path of the binary
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    binary_path = os.path.join(script_dir, "peerconnection_serverless.origin")
-    #v1最原始版本，v2添加了生成块视频，v3更改了上限rate
+    binary_path = os.path.join(script_dir, "peerconnection_serverless.origin_v4")
+    #v1最原始版本，v2添加了生成块视频，v3更改了上限rate,v4更改了日志结构
     app = subprocess.Popen(
         [binary_path] + sys.argv[1:],
         bufsize=1,
