@@ -16,10 +16,18 @@ def main():
     # Get the absolute path of the binary
     script_dir = os.path.dirname(os.path.abspath(__file__))
     binary_path = os.path.join(script_dir, "peerconnection_serverless.origin_v4")
+    
+    # 确保 LD_LIBRARY_PATH 包含 lib 目录
+    lib_dir = os.path.join(os.path.dirname(script_dir), 'lib')
+    if 'LD_LIBRARY_PATH' in os.environ:
+        os.environ['LD_LIBRARY_PATH'] = lib_dir + ':' + os.environ['LD_LIBRARY_PATH']
+    else:
+        os.environ['LD_LIBRARY_PATH'] = lib_dir
+    
     #v1最原始版本，v2添加了生成块视频，v3更改了上限rate,v4更改了日志结构
     app = subprocess.Popen(
         [binary_path] + sys.argv[1:],
-        bufsize=1,
+        bufsize=0,  # 使用无缓冲模式（二进制模式下不支持行缓冲）
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT)
