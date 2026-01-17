@@ -147,13 +147,18 @@ def create_constant_trace(bandwidth_mbps, duration_sec, output_file):
 def create_config_for_algorithm(algo, port, test_duration, is_receiver=True):
     """为特定算法生成配置文件"""
     
+    # #region agent log
+    import json as json_log
+    with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:147","message":"create_config_for_algorithm ENTRY","data":{"algo":algo,"port":port,"test_duration":test_duration,"is_receiver":is_receiver},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"B,D"})+'\n')
+    # #endregion
+    
     if is_receiver:
         template_path = os.path.join(CONFIG_DIR, 'receiver_pyinfer.json')
         with open(template_path, 'r') as f:
             config = json.load(f)
         
         config['serverless_connection']['receiver']['listening_port'] = port
-        config['serverless_connection']['receiver']['listening_ip'] = '0.0.0.0'  # 监听所有接口（Mahimahi需要）
+        config['serverless_connection']['receiver']['listening_ip'] = '127.0.0.1'  # 在Mahimahi shell内监听localhost
         config['serverless_connection']['autoclose'] = test_duration
         
         config['save_to_file']['audio']['file_path'] = os.path.join(OUTPUT_DIR, f'{algo}_outaudio.wav')
@@ -161,15 +166,24 @@ def create_config_for_algorithm(algo, port, test_duration, is_receiver=True):
         config['logging']['log_output_path'] = os.path.join(OUTPUT_DIR, f'{algo}_receiver.log')
         
         config_path = os.path.join(CCALGS_DIR, algo, 'receiver_mahimahi.json')
+        
+        # #region agent log
+        with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:163","message":"BEFORE writing receiver config","data":{"config_path":config_path,"exists":os.path.exists(os.path.dirname(config_path)),"port":port},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"B,D"})+'\n')
+        # #endregion
+        
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
+        
+        # #region agent log
+        with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:165","message":"AFTER writing receiver config","data":{"config_path":config_path,"file_exists":os.path.exists(config_path),"file_size":os.path.getsize(config_path) if os.path.exists(config_path) else 0},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"B"})+'\n')
+        # #endregion
     else:
         template_path = os.path.join(CONFIG_DIR, 'sender_pyinfer.json')
         with open(template_path, 'r') as f:
             config = json.load(f)
         
-        # 在 Mahimahi shell 中，100.64.0.1 是访问宿主机的网关地址
-        config['serverless_connection']['sender']['dest_ip'] = '100.64.0.1'
+        # Sender 和 Receiver 在同一个 Mahimahi shell 中，通过 localhost 连接
+        config['serverless_connection']['sender']['dest_ip'] = '127.0.0.1'
         config['serverless_connection']['sender']['dest_port'] = port
         config['serverless_connection']['autoclose'] = test_duration
         
@@ -200,12 +214,19 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     """
     在 Mahimahi 环境中运行单个算法的测试
     
-    架构：
-    - Receiver 在宿主机上运行（监听 0.0.0.0）
-    - Sender 在 Mahimahi shell 中运行（连接到宿主机IP）
+    新架构（解决多Mahimahi shell冲突）：
+    - Receiver 和 Sender 都在同一个 Mahimahi shell 中运行
+    - Receiver 监听 localhost (127.0.0.1)
+    - Sender 连接到 localhost
+    - 这样避免了多个Mahimahi shell的网关冲突问题
     
-    返回: (receiver_process, sender_process, receiver_log, sender_log)
+    返回: (mahimahi_process, receiver_log, sender_log)
     """
+    # #region agent log
+    import json as json_log
+    with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:199","message":"run_mahimahi_test ENTRY","data":{"algo":algo,"port":port,"work_dir":work_dir,"work_dir_exists":os.path.exists(work_dir)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"A,D"})+'\n')
+    # #endregion
+    
     # 设置环境变量
     lib_path = os.path.join(SCRIPT_DIR, 'lib')
     py_path = os.path.join(SCRIPT_DIR, 'pylib')
@@ -214,17 +235,14 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     # 创建日志文件路径
     receiver_log = f'/tmp/{algo}_mahi_receiver_shell.log'
     sender_log = f'/tmp/{algo}_mahi_sender_shell.log'
+    mahimahi_log = f'/tmp/{algo}_mahi_combined.log'
     
-    # Receiver 命令（在宿主机上直接运行，不通过 Mahimahi）
-    receiver_cmd = f'{env_setup} && cd {work_dir} && {BIN_PATH} receiver_mahimahi.json > {receiver_log} 2>&1'
-    receiver_proc = subprocess.Popen(receiver_cmd, shell=True, preexec_fn=os.setsid)
-    
-    # 等待 receiver 启动并监听端口（给足够时间让端口完全绑定）
-    time.sleep(3)
-    
-    # Sender 命令（在 Mahimahi shell 中运行）
-    # Mahimahi 会拦截 sender 的出站流量，应用带宽限制
-    sender_cmd = f'{env_setup} && cd {work_dir} && {BIN_PATH} sender_mahimahi.json'
+    # Receiver 和 Sender 命令（都在同一个 Mahimahi shell 中运行）
+    # Receiver 在后台运行，Sender 在前台运行
+    # 使用绝对路径指定配置文件，避免工作目录问题
+    receiver_config = os.path.join(work_dir, 'receiver_mahimahi.json')
+    sender_config = os.path.join(work_dir, 'sender_mahimahi.json')
+    combined_cmd = f'{env_setup} && cd {work_dir} && {BIN_PATH} {receiver_config} > {receiver_log} 2>&1 & sleep 3 && cd {work_dir} && {BIN_PATH} {sender_config} > {sender_log} 2>&1'
     
     # 构建 Mahimahi 包装命令
     mahimahi_cmd_base = f"mm-delay {delay_ms}"
@@ -234,11 +252,127 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     
     mahimahi_cmd_base += f" mm-link {uplink_trace} {downlink_trace}"
     
-    # 启动 sender（在 Mahimahi 环境中）
-    sender_full_cmd = f"{mahimahi_cmd_base} -- sh -c '{sender_cmd}' > {sender_log} 2>&1"
-    sender_proc = subprocess.Popen(sender_full_cmd, shell=True, preexec_fn=os.setsid)
+    # #region agent log
+    with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:241","message":"BEFORE starting mahimahi shell","data":{"algo":algo,"mahimahi_cmd":mahimahi_cmd_base,"port":port},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"NETWORK"})+'\n')
+    # #endregion
     
-    return receiver_proc, sender_proc, receiver_log, sender_log
+    # 启动 Mahimahi shell（包含 receiver 和 sender）
+    mahimahi_full_cmd = f"{mahimahi_cmd_base} -- sh -c '{combined_cmd}' > {mahimahi_log} 2>&1"
+    mahimahi_proc = subprocess.Popen(mahimahi_full_cmd, shell=True, preexec_fn=os.setsid)
+    
+    # #region agent log
+    time.sleep(4)  # 等待4秒让receiver和sender都启动
+    with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:248","message":"AFTER starting mahimahi shell","data":{"algo":algo,"mahimahi_pid":mahimahi_proc.pid,"mahimahi_running":mahimahi_proc.poll() is None},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"NETWORK"})+'\n')
+    # #endregion
+    
+    return mahimahi_proc, receiver_log, sender_log
+
+
+def cleanup_old_processes():
+    """清理旧的进程，释放端口"""
+    print("\n清理旧的进程...")
+    
+    # #region agent log
+    import json as json_log
+    with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:244","message":"cleanup_old_processes START","data":{},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"FIX"})+'\n')
+    # #endregion
+    
+    # 杀死所有 peerconnection_serverless 相关进程（包括Python包装器和C++二进制文件）
+    for proc_name in ['peerconnection_serverless.origin_v4', 'peerconnection_serverless.origin', 
+                      'peerconnection_serverless', 'mm-link', 'mm-delay', 'mm-loss']:
+        try:
+            result = subprocess.run(['pkill', '-9', proc_name], 
+                                   capture_output=True, timeout=5)
+            if result.returncode == 0:
+                print(f"  ✓ 已终止旧的 {proc_name} 进程")
+        except:
+            pass
+    
+    # 额外使用 -f 选项匹配完整命令行，确保清理所有相关进程
+    try:
+        subprocess.run(['pkill', '-9', '-f', 'peerconnection_serverless'], 
+                      capture_output=True, timeout=5)
+    except:
+        pass
+    
+    # 等待端口释放
+    time.sleep(2)
+    
+    # 验证是否还有残留的 .origin 进程
+    try:
+        result = subprocess.run(['pgrep', '-f', 'peerconnection_serverless.origin'], 
+                               capture_output=True, text=True, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            remaining_pids = result.stdout.strip().split('\n')
+            print(f"  ⚠ 警告: 仍有 {len(remaining_pids)} 个 .origin 进程未清理，强制清理...")
+            # #region agent log
+            with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:265","message":"Remaining origin processes after cleanup","data":{"remaining_pids":remaining_pids},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"FIX"})+'\n')
+            # #endregion
+            for pid in remaining_pids:
+                try:
+                    os.system(f'kill -9 {pid} 2>/dev/null')
+                except:
+                    pass
+            time.sleep(1)
+    except:
+        pass
+    
+    # 最后再次使用killall确保彻底清理
+    try:
+        subprocess.run(['killall', '-9', 'peerconnection_serverless'], 
+                      capture_output=True, timeout=5)
+        subprocess.run(['killall', '-9', 'peerconnection_serverless.origin'], 
+                      capture_output=True, timeout=5)
+        subprocess.run(['killall', '-9', 'peerconnection_serverless.origin_v4'], 
+                      capture_output=True, timeout=5)
+        time.sleep(2)  # 等待端口完全释放
+    except:
+        pass
+    
+    # 验证关键端口是否已释放
+    print("\n检查端口状态...")
+    max_retries = 3
+    for retry in range(max_retries):
+        try:
+            result = subprocess.run(['netstat', '-tuln'], capture_output=True, text=True, timeout=5)
+            occupied_ports = []
+            for port in range(PORT_BASE, PORT_BASE + len(ALGORITHMS)):
+                if f":{port} " in result.stdout or f":{port}\n" in result.stdout:
+                    occupied_ports.append(port)
+            
+            # #region agent log
+            with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:268","message":"Port status after cleanup","data":{"occupied_ports":occupied_ports,"retry":retry},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"FIX"})+'\n')
+            # #endregion
+            
+            if occupied_ports:
+                if retry < max_retries - 1:
+                    print(f"  ⚠ 警告: 以下端口仍被占用: {occupied_ports}，重试清理 ({retry+1}/{max_retries})...")
+                    # 查找占用端口的进程并强制杀死
+                    for port in occupied_ports:
+                        try:
+                            lsof_result = subprocess.run(['lsof', '-ti', f':{port}'], 
+                                                        capture_output=True, text=True, timeout=5)
+                            if lsof_result.stdout.strip():
+                                pids = lsof_result.stdout.strip().split('\n')
+                                for pid in pids:
+                                    print(f"    强制终止占用端口{port}的进程 PID={pid}")
+                                    os.system(f'kill -9 {pid} 2>/dev/null')
+                        except:
+                            pass
+                    time.sleep(3)
+                else:
+                    print(f"  ✗ 错误: 以下端口仍被占用: {occupied_ports}")
+                    print(f"  请手动运行: sudo lsof -ti:{occupied_ports[0]} | xargs kill -9")
+                    sys.exit(1)
+            else:
+                print(f"  ✓ 端口 {PORT_BASE}-{PORT_BASE + len(ALGORITHMS)-1} 均可用")
+                break
+        except Exception as e:
+            print(f"  跳过端口检查（工具不可用）: {e}")
+            # #region agent log
+            with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:280","message":"Port check failed","data":{"error":str(e)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"FIX"})+'\n')
+            # #endregion
+            break
 
 
 def cleanup_old_files():
@@ -282,6 +416,7 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
     print(f"测试时长: {test_duration}秒")
     print("=" * 70)
     
+    cleanup_old_processes()  # 先清理旧进程，释放端口
     cleanup_old_files()
     setup_environment()
     
@@ -295,6 +430,11 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
         port = PORT_BASE + i
         work_dir = os.path.join(CCALGS_DIR, algo)
         
+        # #region agent log
+        import json as json_log
+        with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:294","message":"Starting algorithm iteration","data":{"algo":algo,"index":i,"port":port,"work_dir":work_dir},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"A"})+'\n')
+        # #endregion
+        
         # 生成配置文件
         create_config_for_algorithm(algo, port, test_duration, is_receiver=True)
         create_config_for_algorithm(algo, port, test_duration, is_receiver=False)
@@ -302,31 +442,62 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
         print(f"\n[{algo}] 启动测试 (端口: {port})")
         
         try:
-            receiver_proc, sender_proc, recv_log, send_log = run_mahimahi_test(
+            mahimahi_proc, recv_log, send_log = run_mahimahi_test(
                 algo, port, uplink_trace_file, downlink_trace_file,
                 delay_ms, loss_percent, test_duration, work_dir
             )
             
+            # #region agent log
+            with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:310","message":"AFTER run_mahimahi_test returned","data":{"algo":algo,"mahimahi_pid":mahimahi_proc.pid,"mahimahi_running":mahimahi_proc.poll() is None},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"C,E"})+'\n')
+            # #endregion
+            
             processes.append({
                 'algo': algo,
-                'receiver': receiver_proc,
-                'sender': sender_proc,
+                'mahimahi': mahimahi_proc,
                 'recv_log': recv_log,
                 'send_log': send_log
             })
             
-            print(f"  ✓ Receiver PID: {receiver_proc.pid}")
-            print(f"  ✓ Sender PID: {sender_proc.pid}")
+            print(f"  ✓ Mahimahi shell PID: {mahimahi_proc.pid}")
             
             # 给每个算法充足的启动时间，避免端口冲突
             time.sleep(2)
             
         except Exception as e:
+            # #region agent log
+            import traceback
+            with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:325","message":"Exception during algorithm startup","data":{"algo":algo,"error":str(e),"traceback":traceback.format_exc()},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"E"})+'\n')
+            # #endregion
             print(f"  ✗ 启动失败: {e}")
     
     print("\n" + "=" * 70)
     print(f"所有算法已启动，测试运行中... (预计 {test_duration} 秒)")
     print("=" * 70)
+    
+    # #region agent log
+    # 等待10秒后检查哪些receiver真正在接收数据
+    print("\n等待10秒，检查连接状态...")
+    time.sleep(10)
+    import json as json_log
+    for proc_info in processes:
+        algo = proc_info['algo']
+        log_file = os.path.join(OUTPUT_DIR, f'{algo}_receiver.log')
+        log_size = 0
+        log_lines = 0
+        if os.path.exists(log_file):
+            log_size = os.path.getsize(log_file)
+            with open(log_file, 'r') as f:
+                log_lines = len(f.readlines())
+        
+        mahimahi_running = proc_info['mahimahi'].poll() is None
+        
+        with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: 
+            f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:372","message":"10 seconds status check","data":{"algo":algo,"log_size":log_size,"log_lines":log_lines,"mahimahi_running":mahimahi_running},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"NETWORK"})+'\n')
+        
+        status = "✓" if log_lines > 10 else "✗"
+        print(f"  [{algo}] {status} Log: {log_lines} lines, Mahimahi: {mahimahi_running}")
+    # #endregion
+    
     print("\n提示:")
     print("  - 测试将自动运行完整个 trace 时长")
     print("  - 按 Ctrl+C 可以提前结束")
@@ -335,10 +506,11 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
     
     # 等待测试完成
     try:
-        # 显示进度
+        # 显示进度（已经过了10秒的检查时间）
         start_time = time.time()
-        while time.time() - start_time < test_duration:
-            elapsed = time.time() - start_time
+        remaining_duration = test_duration - 10  # 减去已经等待的10秒
+        while time.time() - start_time < remaining_duration:
+            elapsed = time.time() - start_time + 10  # 加上之前的10秒
             remaining = test_duration - elapsed
             print(f"\r  进度: {elapsed:.0f}/{test_duration}秒 (剩余 {remaining:.0f}秒)    ", end='', flush=True)
             time.sleep(1)
@@ -353,24 +525,27 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
         algo = proc_info['algo']
         print(f"  停止 [{algo}]...")
         
-        for proc_type in ['receiver', 'sender']:
-            proc = proc_info[proc_type]
+        proc = proc_info['mahimahi']
+        try:
+            # 发送 SIGTERM 到进程组
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=3)
+        except:
             try:
-                # 发送 SIGTERM 到进程组
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                proc.wait(timeout=3)
+                # 如果 SIGTERM 失败，使用 SIGKILL
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except:
-                try:
-                    # 如果 SIGTERM 失败，使用 SIGKILL
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except:
-                    pass
+                pass
     
-    # 清理所有残留进程
-    os.system('pkill -9 peerconnection_serverless 2>/dev/null')
-    os.system('pkill -9 mm-link 2>/dev/null')
-    os.system('pkill -9 mm-delay 2>/dev/null')
-    os.system('pkill -9 mm-loss 2>/dev/null')
+    # 清理所有残留进程（使用 -f 匹配完整命令行）
+    print("  清理残留进程...")
+    os.system('pkill -9 peerconnection_serverless.origin_v4 2>/dev/null')
+    os.system('pkill -9 peerconnection_serverless.origin 2>/dev/null')
+    os.system('pkill -9 -f peerconnection_serverless 2>/dev/null')
+    os.system('pkill -9 -f mm-link 2>/dev/null')
+    os.system('pkill -9 -f mm-delay 2>/dev/null')
+    os.system('pkill -9 -f mm-loss 2>/dev/null')
+    time.sleep(1)  # 等待进程完全终止
     
     # 清理临时文件
     if downlink_trace_file and 'downlink_' in downlink_trace_file and os.path.exists(downlink_trace_file):

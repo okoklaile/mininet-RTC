@@ -3,7 +3,7 @@
         "autoclose": 125,
         "sender": {
             "enabled": true,
-            "dest_ip": "100.64.0.1",
+            "dest_ip": "127.0.0.1",
             "dest_port": 8003
         },
         "receiver": {
