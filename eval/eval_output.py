@@ -309,12 +309,14 @@ def save_statistics_report(stats_dict, output_path):
     """保存统计报告"""
     with open(output_path, 'w') as f:
         f.write("=" * 80 + "\n")
-        f.write("拥塞控制算法性能统计报告\n")
+        f.write("拥塞控制算法网络层性能统计报告\n")
         f.write("=" * 80 + "\n\n")
         
-        f.write("延迟指标说明:\n")
-        f.write("  - 自致延迟: 排除基础传播延迟后的队列缓冲延迟（反映拥塞程度）\n")
-        f.write("  - 95分位延迟: 端到端延迟的95百分位数（包含传播+队列延迟）\n")
+        f.write("⚠️ 延迟指标说明（重要）:\n")
+        f.write("  - 自致延迟: 排除基础传播延迟后的队列缓冲延迟 ✓ 准确（反映拥塞程度）\n")
+        f.write("  - 95分位延迟: 相对于首包的延迟抖动95百分位数 ⚠️ 不是真实端到端延迟\n")
+        f.write("  - 由于sendTimeMs和arrivalTimeMs时间基准不同，无法计算真实传输延迟\n")
+        f.write("  - 真实端到端延迟请参考: eval_video_stats.py 生成的 video_quality_report.txt\n")
         f.write("\n")
         
         # 按接收速率排序
