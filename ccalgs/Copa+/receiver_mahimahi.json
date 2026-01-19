@@ -1,12 +1,12 @@
 {
     "serverless_connection": {
-        "autoclose": 125,
+        "autoclose": 80,
         "sender": {
             "enabled": false
         },
         "receiver": {
             "enabled": true,
-            "listening_ip": "127.0.0.1",
+            "listening_ip": "0.0.0.0",
             "listening_port": 8005
         }
     },

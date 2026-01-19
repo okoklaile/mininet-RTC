@@ -158,7 +158,7 @@ def create_config_for_algorithm(algo, port, test_duration, is_receiver=True):
             config = json.load(f)
         
         config['serverless_connection']['receiver']['listening_port'] = port
-        config['serverless_connection']['receiver']['listening_ip'] = '127.0.0.1'  # 在Mahimahi shell内监听localhost
+        config['serverless_connection']['receiver']['listening_ip'] = '0.0.0.0'  # 监听所有接口
         config['serverless_connection']['autoclose'] = test_duration
         
         config['save_to_file']['audio']['file_path'] = os.path.join(OUTPUT_DIR, f'{algo}_outaudio.wav')
@@ -182,8 +182,9 @@ def create_config_for_algorithm(algo, port, test_duration, is_receiver=True):
         with open(template_path, 'r') as f:
             config = json.load(f)
         
-        # Sender 和 Receiver 在同一个 Mahimahi shell 中，通过 localhost 连接
-        config['serverless_connection']['sender']['dest_ip'] = '127.0.0.1'
+        # Sender 在 Mahimahi shell 内，连接到外部的 Receiver
+        # 使用 shell 的 $MAHIMAHI_BASE 环境变量（mahimahi自动设置）
+        config['serverless_connection']['sender']['dest_ip'] = '$$MAHIMAHI_BASE'  # 占位符，稍后替换
         config['serverless_connection']['sender']['dest_port'] = port
         config['serverless_connection']['autoclose'] = test_duration
         
@@ -214,13 +215,12 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     """
     在 Mahimahi 环境中运行单个算法的测试
     
-    新架构（解决多Mahimahi shell冲突）：
-    - Receiver 和 Sender 都在同一个 Mahimahi shell 中运行
-    - Receiver 监听 localhost (127.0.0.1)
-    - Sender 连接到 localhost
-    - 这样避免了多个Mahimahi shell的网关冲突问题
+    正确架构：
+    - Receiver 在 Mahimahi shell **外部**运行，监听 $MAHIMAHI_BASE
+    - Sender 在 Mahimahi shell **内部**运行，连接到 Receiver
+    - 这样 sender→receiver 的流量才会经过 mahimahi 的带宽限制
     
-    返回: (mahimahi_process, receiver_log, sender_log)
+    返回: (receiver_process, mahimahi_process, receiver_log, sender_log)
     """
     # #region agent log
     import json as json_log
@@ -233,16 +233,22 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     env_setup = f'export LD_LIBRARY_PATH={lib_path}:$LD_LIBRARY_PATH && export PYTHONPATH={py_path}:$PYTHONPATH'
     
     # 创建日志文件路径
-    receiver_log = f'/tmp/{algo}_mahi_receiver_shell.log'
-    sender_log = f'/tmp/{algo}_mahi_sender_shell.log'
-    mahimahi_log = f'/tmp/{algo}_mahi_combined.log'
+    receiver_log = f'/tmp/{algo}_mahi_receiver.log'
+    sender_log = f'/tmp/{algo}_mahi_sender.log'
     
-    # Receiver 和 Sender 命令（都在同一个 Mahimahi shell 中运行）
-    # Receiver 在后台运行，Sender 在前台运行
-    # 使用绝对路径指定配置文件，避免工作目录问题
     receiver_config = os.path.join(work_dir, 'receiver_mahimahi.json')
     sender_config = os.path.join(work_dir, 'sender_mahimahi.json')
-    combined_cmd = f'{env_setup} && cd {work_dir} && {BIN_PATH} {receiver_config} > {receiver_log} 2>&1 & sleep 3 && cd {work_dir} && {BIN_PATH} {sender_config} > {sender_log} 2>&1'
+    
+    # 1. 先在**外部**启动 Receiver（不在mahimahi shell内）
+    receiver_cmd = f'{env_setup} && cd {work_dir} && {BIN_PATH} {receiver_config} > {receiver_log} 2>&1'
+    receiver_proc = subprocess.Popen(receiver_cmd, shell=True, preexec_fn=os.setsid)
+    
+    # 等待receiver启动并监听端口
+    time.sleep(3)
+    
+    # 2. 在 Mahimahi shell **内部**启动 Sender
+    # 在启动前，用sed替换配置文件中的$$MAHIMAHI_BASE为实际的环境变量值
+    sender_cmd = f'{env_setup} && cd {work_dir} && sed -i "s/\\$\\$MAHIMAHI_BASE/$MAHIMAHI_BASE/g" {sender_config} && {BIN_PATH} {sender_config} > {sender_log} 2>&1'
     
     # 构建 Mahimahi 包装命令
     mahimahi_cmd_base = f"mm-delay {delay_ms}"
@@ -252,20 +258,14 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     
     mahimahi_cmd_base += f" mm-link {uplink_trace} {downlink_trace}"
     
-    # #region agent log
-    with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:241","message":"BEFORE starting mahimahi shell","data":{"algo":algo,"mahimahi_cmd":mahimahi_cmd_base,"port":port},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"NETWORK"})+'\n')
-    # #endregion
-    
-    # 启动 Mahimahi shell（包含 receiver 和 sender）
-    mahimahi_full_cmd = f"{mahimahi_cmd_base} -- sh -c '{combined_cmd}' > {mahimahi_log} 2>&1"
+    # 启动 Mahimahi shell（只包含 sender）
+    mahimahi_full_cmd = f"{mahimahi_cmd_base} -- sh -c '{sender_cmd}'"
     mahimahi_proc = subprocess.Popen(mahimahi_full_cmd, shell=True, preexec_fn=os.setsid)
     
-    # #region agent log
-    time.sleep(4)  # 等待4秒让receiver和sender都启动
-    with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:248","message":"AFTER starting mahimahi shell","data":{"algo":algo,"mahimahi_pid":mahimahi_proc.pid,"mahimahi_running":mahimahi_proc.poll() is None},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"NETWORK"})+'\n')
-    # #endregion
+    # 等待连接建立
+    time.sleep(2)
     
-    return mahimahi_proc, receiver_log, sender_log
+    return receiver_proc, mahimahi_proc, receiver_log, sender_log
 
 
 def cleanup_old_processes():
@@ -390,7 +390,7 @@ def cleanup_old_files():
                     print(f"  警告: 无法删除 {old_file}: {e}")
 
 
-def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_ms=DEFAULT_DELAY, loss_percent=DEFAULT_LOSS):
+def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_ms=DEFAULT_DELAY, loss_percent=DEFAULT_LOSS, custom_duration=None):
     """运行多算法 Mahimahi 测试"""
     
     print("=" * 70)
@@ -401,7 +401,15 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
     
     # 解析 trace
     trace = MahimahiTrace(uplink_trace_file)
-    test_duration = trace.get_total_duration_sec()
+    
+    # 使用用户指定的时长或trace的时长
+    if custom_duration is not None:
+        test_duration = custom_duration
+        trace_duration = trace.get_total_duration_sec()
+        if test_duration > trace_duration:
+            print(f"  注意: 指定时长({test_duration}秒) > trace时长({trace_duration}秒), Mahimahi将循环使用trace")
+    else:
+        test_duration = trace.get_total_duration_sec()
     
     # 如果没有指定 downlink trace，创建一个高带宽的恒定 trace
     if downlink_trace_file is None:
@@ -413,7 +421,10 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
     print(f"Downlink trace: {os.path.basename(downlink_trace_file)}")
     print(f"延迟: {delay_ms}ms")
     print(f"丢包率: {loss_percent}%")
-    print(f"测试时长: {test_duration}秒")
+    if custom_duration is not None:
+        print(f"测试时长: {test_duration}秒 (手动指定)")
+    else:
+        print(f"测试时长: {test_duration}秒 (根据trace自动计算)")
     print("=" * 70)
     
     cleanup_old_processes()  # 先清理旧进程，释放端口
@@ -442,23 +453,24 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
         print(f"\n[{algo}] 启动测试 (端口: {port})")
         
         try:
-            mahimahi_proc, recv_log, send_log = run_mahimahi_test(
+            receiver_proc, mahimahi_proc, recv_log, send_log = run_mahimahi_test(
                 algo, port, uplink_trace_file, downlink_trace_file,
                 delay_ms, loss_percent, test_duration, work_dir
             )
             
             # #region agent log
-            with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:310","message":"AFTER run_mahimahi_test returned","data":{"algo":algo,"mahimahi_pid":mahimahi_proc.pid,"mahimahi_running":mahimahi_proc.poll() is None},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"C,E"})+'\n')
+            with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:310","message":"AFTER run_mahimahi_test returned","data":{"algo":algo,"receiver_pid":receiver_proc.pid,"mahimahi_pid":mahimahi_proc.pid,"mahimahi_running":mahimahi_proc.poll() is None},"timestamp":int(time.time()*1000),"sessionId":"debug-session","hypothesisId":"C,E"})+'\n')
             # #endregion
             
             processes.append({
                 'algo': algo,
+                'receiver': receiver_proc,
                 'mahimahi': mahimahi_proc,
                 'recv_log': recv_log,
                 'send_log': send_log
             })
             
-            print(f"  ✓ Mahimahi shell PID: {mahimahi_proc.pid}")
+            print(f"  ✓ Receiver PID: {receiver_proc.pid}, Mahimahi shell PID: {mahimahi_proc.pid}")
             
             # 给每个算法充足的启动时间，避免端口冲突
             time.sleep(2)
@@ -489,13 +501,14 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
             with open(log_file, 'r') as f:
                 log_lines = len(f.readlines())
         
+        receiver_running = proc_info['receiver'].poll() is None
         mahimahi_running = proc_info['mahimahi'].poll() is None
         
         with open('/home/wyq/桌面/mininet-RTC/.cursor/debug.log', 'a') as f_log: 
-            f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:372","message":"10 seconds status check","data":{"algo":algo,"log_size":log_size,"log_lines":log_lines,"mahimahi_running":mahimahi_running},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"NETWORK"})+'\n')
+            f_log.write(json_log.dumps({"location":"mahimahi_multi_cc_test.py:372","message":"10 seconds status check","data":{"algo":algo,"log_size":log_size,"log_lines":log_lines,"receiver_running":receiver_running,"mahimahi_running":mahimahi_running},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"post-fix","hypothesisId":"NETWORK"})+'\n')
         
         status = "✓" if log_lines > 10 else "✗"
-        print(f"  [{algo}] {status} Log: {log_lines} lines, Mahimahi: {mahimahi_running}")
+        print(f"  [{algo}] {status} Log: {log_lines} lines, Receiver: {receiver_running}, Mahimahi: {mahimahi_running}")
     # #endregion
     
     print("\n提示:")
@@ -525,15 +538,25 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
         algo = proc_info['algo']
         print(f"  停止 [{algo}]...")
         
-        proc = proc_info['mahimahi']
+        # 停止 mahimahi shell (包含sender)
+        mahimahi_proc = proc_info['mahimahi']
         try:
-            # 发送 SIGTERM 到进程组
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            proc.wait(timeout=3)
+            os.killpg(os.getpgid(mahimahi_proc.pid), signal.SIGTERM)
+            mahimahi_proc.wait(timeout=3)
         except:
             try:
-                # 如果 SIGTERM 失败，使用 SIGKILL
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                os.killpg(os.getpgid(mahimahi_proc.pid), signal.SIGKILL)
+            except:
+                pass
+        
+        # 停止 receiver
+        receiver_proc = proc_info['receiver']
+        try:
+            os.killpg(os.getpgid(receiver_proc.pid), signal.SIGTERM)
+            receiver_proc.wait(timeout=3)
+        except:
+            try:
+                os.killpg(os.getpgid(receiver_proc.pid), signal.SIGKILL)
             except:
                 pass
     
@@ -575,20 +598,28 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 使用 Mahimahi trace 文件测试
+  # 使用 Mahimahi trace 文件测试（自动使用trace的完整时长）
   python3 mahimahi_multi_cc_test.py mahimahi_traces/ATT-LTE-driving-2016.down
+  
+  # 指定运行时间（60秒）
+  python3 mahimahi_multi_cc_test.py mahimahi_traces/ATT-LTE-driving-2016.down --duration 60
   
   # 指定延迟和丢包率
   python3 mahimahi_multi_cc_test.py mahimahi_traces/ATT-LTE-driving-2016.down --delay 50 --loss 1
   
   # 同时指定 uplink 和 downlink trace
   python3 mahimahi_multi_cc_test.py mahimahi_traces/ATT-LTE-driving-2016.down --downlink mahimahi_traces/ATT-LTE-driving-2016.up
+  
+  # 指定运行时间和网络参数
+  python3 mahimahi_multi_cc_test.py mahimahi_traces/7Train1.down --duration 120 --delay 30 --loss 0.5
 """
     )
     
     parser.add_argument('uplink_trace', help='Uplink trace 文件路径（Mahimahi 格式）')
     parser.add_argument('--downlink', dest='downlink_trace', default=None,
                         help='Downlink trace 文件路径（可选，默认使用100Mbps恒定带宽）')
+    parser.add_argument('--duration', type=int, default=None,
+                        help='测试时长（秒），不指定则使用trace的完整时长')
     parser.add_argument('--delay', type=int, default=DEFAULT_DELAY,
                         help=f'单向延迟（毫秒），默认: {DEFAULT_DELAY}ms')
     parser.add_argument('--loss', type=float, default=DEFAULT_LOSS,
@@ -629,8 +660,13 @@ def main():
     # 创建输出目录
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
+    # 验证duration参数
+    if args.duration is not None and args.duration <= 0:
+        print(f"错误: 测试时长必须大于0秒")
+        sys.exit(1)
+    
     # 运行测试
-    run_multi_mahimahi_test(uplink_trace, downlink_trace, args.delay, args.loss)
+    run_multi_mahimahi_test(uplink_trace, downlink_trace, args.delay, args.loss, args.duration)
 
 
 if __name__ == '__main__':
