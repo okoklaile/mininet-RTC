@@ -15,8 +15,8 @@ Mahimahi trace 格式:
 - 表示在该时间可以发送一个 MTU 包（1500字节）
 
 使用方法:
-    python3 mahimahi_multi_cc_test.py <trace_file> [--delay DELAY_MS] [--loss LOSS_PERCENT]
-    例如: python3 mahimahi_multi_cc_test.py mahimahi_traces/ATT-LTE-driving-2016.down --delay 20 --loss 0
+    python3 mahimahi_multi_cc_test.py <trace_file> [--delay DELAY_MS] [--loss LOSS_PERCENT] [--queue QUEUE_SIZE]
+    例如: python3 mahimahi_multi_cc_test.py mahimahi_traces/ATT-LTE-driving-2016.down --delay 20 --loss 0 --queue 100
 """
 
 import os
@@ -58,6 +58,7 @@ ALGORITHMS = [
 PORT_BASE = 8000  # 基础端口，每个算法递增
 DEFAULT_DELAY = 20  # 默认延迟（毫秒）
 DEFAULT_LOSS = 0    # 默认丢包率（百分比）
+DEFAULT_QUEUE_SIZE = 1000  # 默认缓冲区大小（包数）
 
 # 测试时长（秒）- 会根据trace长度自动调整
 TEST_DURATION = 60
@@ -211,7 +212,7 @@ def setup_environment():
 # Mahimahi 测试执行
 # ============================================
 
-def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_percent, test_duration, work_dir):
+def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_percent, queue_size, test_duration, work_dir):
     """
     在 Mahimahi 环境中运行单个算法的测试
     
@@ -219,6 +220,9 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     - Receiver 在 Mahimahi shell **外部**运行，监听 $MAHIMAHI_BASE
     - Sender 在 Mahimahi shell **内部**运行，连接到 Receiver
     - 这样 sender→receiver 的流量才会经过 mahimahi 的带宽限制
+    
+    参数:
+    - queue_size: 缓冲区大小（包数），用于限制队列长度，防止 bufferbloat
     
     返回: (receiver_process, mahimahi_process, receiver_log, sender_log)
     """
@@ -256,7 +260,10 @@ def run_mahimahi_test(algo, port, uplink_trace, downlink_trace, delay_ms, loss_p
     if loss_percent > 0:
         mahimahi_cmd_base += f" mm-loss uplink {loss_percent}"
     
+    # 添加队列大小限制（防止 bufferbloat）
     mahimahi_cmd_base += f" mm-link {uplink_trace} {downlink_trace}"
+    mahimahi_cmd_base += f" --uplink-queue=droptail --uplink-queue-args=packets={queue_size}"
+    mahimahi_cmd_base += f" --downlink-queue=droptail --downlink-queue-args=packets={queue_size}"
     
     # 启动 Mahimahi shell（只包含 sender）
     mahimahi_full_cmd = f"{mahimahi_cmd_base} -- sh -c '{sender_cmd}'"
@@ -390,7 +397,7 @@ def cleanup_old_files():
                     print(f"  警告: 无法删除 {old_file}: {e}")
 
 
-def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_ms=DEFAULT_DELAY, loss_percent=DEFAULT_LOSS, custom_duration=None):
+def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_ms=DEFAULT_DELAY, loss_percent=DEFAULT_LOSS, queue_size=DEFAULT_QUEUE_SIZE, custom_duration=None):
     """运行多算法 Mahimahi 测试"""
     
     print("=" * 70)
@@ -421,6 +428,7 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
     print(f"Downlink trace: {os.path.basename(downlink_trace_file)}")
     print(f"延迟: {delay_ms}ms")
     print(f"丢包率: {loss_percent}%")
+    print(f"缓冲区大小: {queue_size} 包")
     if custom_duration is not None:
         print(f"测试时长: {test_duration}秒 (手动指定)")
     else:
@@ -455,7 +463,7 @@ def run_multi_mahimahi_test(uplink_trace_file, downlink_trace_file=None, delay_m
         try:
             receiver_proc, mahimahi_proc, recv_log, send_log = run_mahimahi_test(
                 algo, port, uplink_trace_file, downlink_trace_file,
-                delay_ms, loss_percent, test_duration, work_dir
+                delay_ms, loss_percent, queue_size, test_duration, work_dir
             )
             
             # #region agent log
@@ -612,6 +620,9 @@ def main():
   
   # 指定运行时间和网络参数
   python3 mahimahi_multi_cc_test.py mahimahi_traces/7Train1.down --duration 120 --delay 30 --loss 0.5
+  
+  # 指定缓冲区大小（包数）
+  python3 mahimahi_multi_cc_test.py mahimahi_traces/ATT-LTE-driving-2016.down --queue 200
 """
     )
     
@@ -624,6 +635,8 @@ def main():
                         help=f'单向延迟（毫秒），默认: {DEFAULT_DELAY}ms')
     parser.add_argument('--loss', type=float, default=DEFAULT_LOSS,
                         help=f'丢包率（百分比），默认: {DEFAULT_LOSS}%%')
+    parser.add_argument('--queue', type=int, default=DEFAULT_QUEUE_SIZE,
+                        help=f'缓冲区大小（包数），默认: {DEFAULT_QUEUE_SIZE} 包')
     
     args = parser.parse_args()
     
@@ -666,7 +679,7 @@ def main():
         sys.exit(1)
     
     # 运行测试
-    run_multi_mahimahi_test(uplink_trace, downlink_trace, args.delay, args.loss, args.duration)
+    run_multi_mahimahi_test(uplink_trace, downlink_trace, args.delay, args.loss, args.queue, args.duration)
 
 
 if __name__ == '__main__':

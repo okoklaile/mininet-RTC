@@ -360,9 +360,11 @@ def plot_qoe_metrics(data_dict, output_path):
     frames_dropped = [data_dict[a][1]['total_frames_dropped'] for a in algos]
     avg_delays = [data_dict[a][1]['avg_delay'] for a in algos]
     packet_loss_rates = [data_dict[a][1]['packet_loss_rate'] for a in algos]  # 丢包率
+    avg_render_fps = [data_dict[a][1]['avg_render_fps'] for a in algos]  # 平均渲染帧率
+    avg_bitrates = [data_dict[a][1]['avg_bitrate'] for a in algos]  # 平均比特率
     
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    fig.suptitle('Quality of Experience (QoE) Metrics Comparison', fontsize=18, fontweight='bold')
+    fig, axes = plt.subplots(3, 3, figsize=(18, 14))
+    fig.suptitle('Quality of Experience (QoE) Metrics Comparison', fontsize=20, fontweight='bold')
     
     # 1. 卡顿次数
     axes[0, 0].bar(algos, freeze_counts, color='coral', alpha=0.8)
@@ -400,8 +402,24 @@ def plot_qoe_metrics(data_dict, output_path):
     axes[1, 2].set_title('Packet Loss Rate', fontsize=14, fontweight='bold')
     axes[1, 2].grid(axis='y', alpha=0.3)
     
+    # 7. 平均渲染帧率
+    axes[2, 0].bar(algos, avg_render_fps, color='plum', alpha=0.8)
+    axes[2, 0].set_ylabel('Average FPS', fontsize=12)
+    axes[2, 0].set_title('Average Render Frame Rate', fontsize=14, fontweight='bold')
+    axes[2, 0].grid(axis='y', alpha=0.3)
+    
+    # 8. 平均比特率
+    axes[2, 1].bar(algos, avg_bitrates, color='lightcyan', alpha=0.8, edgecolor='teal')
+    axes[2, 1].set_ylabel('Bitrate (Mbps)', fontsize=12)
+    axes[2, 1].set_title('Average Video Bitrate', fontsize=14, fontweight='bold')
+    axes[2, 1].grid(axis='y', alpha=0.3)
+    
+    # 9. 隐藏第三行第三个子图（保持布局对称）
+    axes[2, 2].axis('off')
+    
     for ax in axes.flat:
-        ax.tick_params(axis='x', rotation=45)
+        if ax.get_visible():
+            ax.tick_params(axis='x', rotation=45)
     
     plt.tight_layout()
     plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
