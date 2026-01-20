@@ -39,7 +39,16 @@
         }
     },
     "save_to_file": {
-        "enabled": false
+        "enabled": false,
+        "audio": {
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/Gemini_inaudio.wav"
+        },
+        "video": {
+            "width": 640,
+            "height": 480,
+            "fps": 60,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/Gemini_invideo.yuv"
+        }
     },
     "logging": {
         "enabled": false,

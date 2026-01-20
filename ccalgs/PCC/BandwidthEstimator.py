@@ -30,11 +30,16 @@ class Estimator(object):
         # RTT Tracking for gradient
         self.prev_avg_rtt = 0
         self.curr_avg_rtt = 0
+        
+        # Timer delta for clock synchronization (抵消时钟偏移)
+        self.timer_delta = None
 
     def report_states(self, stats: dict):
         '''
         收集数据包统计信息
         '''
+        if stats.get("type") == "qoe":
+            return
         pkt = stats
         packet_info = PacketInfo()
         packet_info.payload_type = pkt["payload_type"]
@@ -114,7 +119,13 @@ class Estimator(object):
 
         for pkt in self.packets_list:
             total_bytes += pkt.size
-            rtt = pkt.receive_timestamp - pkt.send_timestamp
+            
+            # 使用抵消法计算延迟，消除时钟偏移影响
+            if self.timer_delta is None:
+                # 第一个包：初始化 timer_delta
+                self.timer_delta = -(pkt.receive_timestamp - pkt.send_timestamp)
+            
+            rtt = self.timer_delta + pkt.receive_timestamp - pkt.send_timestamp
             rtt_sum += rtt
             count += 1
             

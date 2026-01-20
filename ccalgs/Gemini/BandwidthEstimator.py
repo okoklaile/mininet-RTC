@@ -253,6 +253,8 @@ class Estimator(object):
             "payload_size": uint
         }
         '''
+        if stats.get("type") == "qoe":
+            return
         self.last_call = "report_states"
         packet_list=[]
         packet_list.append(stats)

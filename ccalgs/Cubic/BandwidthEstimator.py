@@ -33,6 +33,8 @@ class Estimator(object):
         '''
         收集接收到的数据包信息
         '''
+        if stats.get("type") == "qoe":
+            return
         pkt = stats
         packet_info = PacketInfo()
         packet_info.payload_type = pkt["payload_type"]

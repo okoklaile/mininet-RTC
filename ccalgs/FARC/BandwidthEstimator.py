@@ -160,6 +160,8 @@ class Estimator:
                 "payload_size": uint         # 载荷大小(字节)
             }
         """
+        if stats.get("type") == "qoe":
+            return
         self.report_count += 1
         
         if self.report_count <= 5 or self.report_count % 100 == 0:
@@ -210,9 +212,11 @@ class Estimator:
             return int(self.bandwidth_prediction)
         
         # 1. 从 packet_record 中提取网络统计特征
-        receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time)
-        delay = self.packet_record.calculate_average_delay(interval=self.step_time)
-        loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time)
+        # 视频包的 payload_type 为 125，只统计视频包
+        VIDEO_PAYLOAD_TYPE = 125
+        receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
+        delay = self.packet_record.calculate_average_delay(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
+        loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         
         debug_print(f"网络统计: receiving_rate={receiving_rate:.0f} bps, delay={delay:.2f} ms, loss_ratio={loss_ratio:.4f}")
         

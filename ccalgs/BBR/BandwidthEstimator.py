@@ -48,6 +48,9 @@ class Estimator(object):
         self.cycle_idx = 0
         self.cycle_start_time = -1
         
+        # Timer delta for clock synchronization (抵消时钟偏移)
+        self.timer_delta = None
+        
         # Startup logic
         self.full_bw_reached = False
         self.last_startup_bw = 0
@@ -57,6 +60,8 @@ class Estimator(object):
         self.probe_rtt_start_ms = -1
 
     def report_states(self, stats: dict):
+        if stats.get("type") == "qoe":
+            return
         pkt = stats
         packet_info = PacketInfo()
         packet_info.payload_type = pkt["payload_type"]
@@ -121,9 +126,14 @@ class Estimator(object):
         
         self.btl_bw = self.btl_bw_filter.get_best()
 
-        # 更新 RTprop
+        # 更新 RTprop (使用抵消法计算 RTT)
         for pkt in video_packets:
-            rtt = pkt.receive_timestamp - pkt.send_timestamp
+            # 使用抵消法计算延迟，消除时钟偏移影响
+            if self.timer_delta is None:
+                # 第一个包：初始化 timer_delta
+                self.timer_delta = -(pkt.receive_timestamp - pkt.send_timestamp)
+            
+            rtt = self.timer_delta + pkt.receive_timestamp - pkt.send_timestamp
             if rtt > 0:
                 if rtt <= self.rt_prop:
                     self.rt_prop = rtt

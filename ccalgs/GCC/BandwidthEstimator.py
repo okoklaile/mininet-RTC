@@ -54,6 +54,9 @@ class Estimator(object):
         self.last_update_ms = -1  # 上次更新时间
         self.last_update_threshold_ms = -1  # 上次更新阈值的时间
         self.now_ms = -1  # 当前时间
+        
+        # Timer delta for clock synchronization (抵消时钟偏移)
+        self.timer_delta = None
 
     def reset(self):
         """
@@ -79,12 +82,13 @@ class Estimator(object):
         self.gamma1 = 12.5
         self.num_of_deltas_ = 0
         self.time_over_using = -1
-        self.prev_trend = 0.0 
+        self.prev_trend = 0.0
         self.overuse_counter = 0
         self.overuse_flag = 'NORMAL'
-        self.last_update_ms = -1 
+        self.last_update_ms = -1
         self.last_update_threshold_ms = -1
         self.now_ms = -1
+        self.timer_delta = None
 
     def report_states(self, stats: dict):
         """
@@ -93,6 +97,8 @@ class Estimator(object):
         Args:
             stats: 包含数据包统计信息的字典
         """
+        if stats.get("type") == "qoe":
+            return
         pkt = stats
         packet_info = PacketInfo()
         packet_info.payload_type = pkt["payload_type"]
@@ -589,7 +595,20 @@ class Estimator(object):
         avg_packet_size = 8 * sum_packet_size / len(self.packets_list)
 
         beta = 0.0
-        RTT = 2 * (self.packets_list[-1].receive_timestamp - self.packets_list[-1].send_timestamp)
+        
+        # 使用抵消法计算延迟，消除时钟偏移影响
+        if self.timer_delta is None and len(self.packets_list) > 0:
+            # 第一个包：初始化 timer_delta
+            pkt = self.packets_list[-1]
+            self.timer_delta = -(pkt.receive_timestamp - pkt.send_timestamp)
+        
+        if self.timer_delta is not None and len(self.packets_list) > 0:
+            pkt = self.packets_list[-1]
+            one_way_delay = self.timer_delta + pkt.receive_timestamp - pkt.send_timestamp
+            RTT = 2 * one_way_delay
+        else:
+            RTT = 100  # 默认值
+        
         response_time = 200  # 响应时间阈值(毫秒)
 
         # 根据距上次更新的时间计算增长系数

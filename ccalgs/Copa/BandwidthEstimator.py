@@ -23,6 +23,9 @@ class Estimator(object):
         self.avg_rtt = 0
         self.queuing_delay = 0
         self.now_ms = 0
+        
+        # Timer delta for clock synchronization (抵消时钟偏移)
+        self.timer_delta = None
 
     def reset(self):
         self.packets_list = []
@@ -33,8 +36,11 @@ class Estimator(object):
         self.same_direction_count = 0
         self.min_rtt = float('inf')
         self.start_time = -1
+        self.timer_delta = None
 
     def report_states(self, stats: dict):
+        if stats.get("type") == "qoe":
+            return
         pkt = stats
         packet_info = PacketInfo()
         packet_info.payload_type = pkt["payload_type"]
@@ -85,8 +91,13 @@ class Estimator(object):
         count = 0
         for pkt in self.packets_list:
             # 修改点：增加 payload_type 检查，仅使用视频包计算 RTT
-            if pkt.payload_type == 125: 
-                rtt = pkt.receive_timestamp - pkt.send_timestamp
+            if pkt.payload_type == 125:
+                # 使用抵消法计算延迟，消除时钟偏移影响
+                if self.timer_delta is None:
+                    # 第一个包：初始化 timer_delta
+                    self.timer_delta = -(pkt.receive_timestamp - pkt.send_timestamp)
+                
+                rtt = self.timer_delta + pkt.receive_timestamp - pkt.send_timestamp
                 if rtt > 0:
                     curr_rtt_sum += rtt
                     count += 1

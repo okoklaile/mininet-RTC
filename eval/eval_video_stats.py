@@ -5,10 +5,13 @@
 
 功能:
 - 提取 VideoReceiveStream stats 数据
-- 从网络层提取丢包率数据
+- 从视频层的 cum_loss 和 packets_received 计算丢包率
 - 分析视频质量指标（比特率、帧率、延迟、卡顿、丢包等）
 - 生成多维度对比图表
 - 生成视频质量评估报告
+
+丢包率计算:
+    丢包率 = cum_loss / (cum_loss + packets_received) × 100%
 
 使用方法:
     python3 eval/eval_video_stats.py [--smooth] [--window WINDOW]
@@ -103,7 +106,13 @@ class VideoStatsParser:
 
 
 class NetworkStatsParser:
-    """解析网络层统计日志，用于提取丢包率"""
+    """
+    解析网络层统计日志，用于提取丢包率
+    
+    注意：此类已废弃，不再使用。
+    丢包率现在直接从视频层的 cum_loss 和 packets_received 计算。
+    保留此类仅供参考或未来可能的网络层分析需求。
+    """
     
     def __init__(self, log_path):
         self.log_path = log_path
@@ -162,7 +171,7 @@ class VideoMetrics:
         
         参数:
         - video_stats: 视频统计数据列表
-        - packet_loss_rate: 网络层丢包率（百分比）
+        - packet_loss_rate: 网络层丢包率（百分比）- 已废弃，改用视频层数据计算
         
         返回:
         - 时间序列数据字典
@@ -184,50 +193,56 @@ class VideoMetrics:
             'decode_fps': [s.get('decode_fps', 0) for s in video_stats],
             'cur_delay_ms': [s.get('cur_delay_ms', 0) for s in video_stats],
             'jb_delay_ms': [s.get('jb_delay_ms', 0) for s in video_stats],
+            'e2e_delay_ms': [s.get('e2e_delay_ms', 0) for s in video_stats],  # 端到端延迟
+            'network_delay_ms': [s.get('network_delay_ms', 0) for s in video_stats],  # 网络延迟
             'frames_dropped': [s.get('frames_dropped', 0) for s in video_stats],
             'freeze_cnt': [s.get('freeze_cnt', 0) for s in video_stats],
             'freeze_dur_ms': [s.get('freeze_dur_ms', 0) for s in video_stats],
             'cum_loss': [s.get('cum_loss', 0) for s in video_stats],
+            'packets_received': [s.get('packets_received', 0) for s in video_stats],
             'nack': [s.get('nack', 0) for s in video_stats],
             'decode_ms': [s.get('decode_ms', 0) for s in video_stats],
         }
         
+        # 计算丢包率时间序列（百分比）
+        time_series['packet_loss_rate'] = [
+            (cum_loss / (cum_loss + packets_received) * 100) 
+            if (cum_loss + packets_received) > 0 else 0.0
+            for cum_loss, packets_received in zip(time_series['cum_loss'], time_series['packets_received'])
+        ]
+        
         # 聚合统计
         total_packet_loss = time_series['cum_loss'][-1] if time_series['cum_loss'] else 0
+        total_packets_received = time_series['packets_received'][-1] if time_series['packets_received'] else 0
+        
+        # 使用视频层的 cum_loss 和 packets_received 计算丢包率
+        total_packets_sent = total_packet_loss + total_packets_received
+        video_packet_loss_rate = (total_packet_loss / total_packets_sent * 100) if total_packets_sent > 0 else 0.0
         
         # 计算总播放时长（秒）
         total_duration_s = rel_times[-1] if rel_times else 0
         total_freeze_duration_ms = time_series['freeze_dur_ms'][-1] if time_series['freeze_dur_ms'] else 0
         freeze_rate = (total_freeze_duration_ms / 1000.0 / total_duration_s * 100) if total_duration_s > 0 else 0
         
-        # 延迟统计增强
-        delay_list = time_series['cur_delay_ms']
-        min_delay = min(delay_list) if delay_list else 0
-        max_delay = max(delay_list) if delay_list else 0
-        p95_delay = np.percentile(delay_list, 95) if delay_list else 0
-        p99_delay = np.percentile(delay_list, 99) if delay_list else 0
-        
-        # 自致延迟 = 当前延迟 - 最小延迟（反映拥塞造成的额外延迟）
-        self_inflicted_delays = [d - min_delay for d in delay_list] if delay_list else []
-        avg_self_inflicted = np.mean(self_inflicted_delays) if self_inflicted_delays else 0
+        # 计算端到端延迟和网络延迟（过滤掉 0 和负值）
+        valid_e2e_delays = [d for d in time_series['e2e_delay_ms'] if d > 0]
+        valid_network_delays = [d for d in time_series['network_delay_ms'] if d > 0]
         
         aggregated = {
             'avg_bitrate': np.mean(time_series['total_bps']),
             'avg_render_fps': np.mean(time_series['render_fps']),
             'avg_network_fps': np.mean(time_series['network_fps']),
             'avg_delay': np.mean(time_series['cur_delay_ms']),
-            'min_delay': min_delay,
-            'max_delay': max_delay,
-            'p95_delay': p95_delay,
-            'p99_delay': p99_delay,
-            'avg_self_inflicted_delay': avg_self_inflicted,
             'avg_jb_delay': np.mean(time_series['jb_delay_ms']),
+            'avg_e2e_delay': np.mean(valid_e2e_delays) if valid_e2e_delays else -1,
+            'avg_network_delay': np.mean(valid_network_delays) if valid_network_delays else -1,
             'total_freeze_count': time_series['freeze_cnt'][-1] if time_series['freeze_cnt'] else 0,
             'total_freeze_duration': total_freeze_duration_ms,
             'freeze_rate': freeze_rate,
             'total_frames_dropped': time_series['frames_dropped'][-1] if time_series['frames_dropped'] else 0,
             'total_packet_loss': total_packet_loss,
-            'packet_loss_rate': packet_loss_rate if packet_loss_rate is not None else 0.0,
+            'total_packets_received': total_packets_received,
+            'packet_loss_rate': video_packet_loss_rate,  # 使用视频层计算的丢包率
             'total_nack': time_series['nack'][-1] if time_series['nack'] else 0,
             'avg_decode_time': np.mean(time_series['decode_ms']),
             'resolution': f"{video_stats[0].get('width', 0)}x{video_stats[0].get('height', 0)}",
@@ -281,10 +296,10 @@ def plot_multi_metrics(data_dict, output_path, smooth=False, smooth_window=5):
     metrics_config = [
         ('total_bps', 'Video Bitrate', 'Bitrate (Mbps)'),
         ('render_fps', 'Render Frame Rate', 'Render FPS'),
-        ('cur_delay_ms', 'End-to-End Delay', 'End-to-End Delay (ms)'),
-        ('jb_delay_ms', 'Jitter Buffer Delay', 'Jitter Buffer Delay (ms)'),
+        ('e2e_delay_ms', 'End-to-End Delay', 'E2E Delay (ms)'),
+        ('network_delay_ms', 'Network Delay', 'Network Delay (ms)'),
         ('freeze_cnt', 'Freeze Count', 'Freeze Count'),
-        ('cum_loss', 'Cumulative Packet Loss', 'Cumulative Packet Loss'),
+        ('packet_loss_rate', 'Packet Loss Rate', 'Packet Loss Rate (%)'),
     ]
     
     for idx, (metric_key, title_cn, ylabel) in enumerate(metrics_config):
@@ -357,15 +372,16 @@ def plot_qoe_metrics(data_dict, output_path):
     freeze_counts = [data_dict[a][1]['total_freeze_count'] for a in algos]
     freeze_durations = [data_dict[a][1]['total_freeze_duration'] / 1000.0 for a in algos]  # 转换为秒
     freeze_rates = [data_dict[a][1]['freeze_rate'] for a in algos]  # 卡顿率
-    frames_dropped = [data_dict[a][1]['total_frames_dropped'] for a in algos]
-    avg_delays = [data_dict[a][1]['avg_delay'] for a in algos]
     packet_loss_rates = [data_dict[a][1]['packet_loss_rate'] for a in algos]  # 丢包率
     avg_render_fps = [data_dict[a][1]['avg_render_fps'] for a in algos]  # 平均渲染帧率
     avg_bitrates = [data_dict[a][1]['avg_bitrate'] for a in algos]  # 平均比特率
+    avg_e2e_delays = [data_dict[a][1]['avg_e2e_delay'] if data_dict[a][1]['avg_e2e_delay'] > 0 else 0 for a in algos]  # 端到端延迟
+    avg_network_delays = [data_dict[a][1]['avg_network_delay'] if data_dict[a][1]['avg_network_delay'] > 0 else 0 for a in algos]  # 网络延迟
     
-    fig, axes = plt.subplots(3, 3, figsize=(18, 14))
+    fig, axes = plt.subplots(3, 3, figsize=(18, 12))
     fig.suptitle('Quality of Experience (QoE) Metrics Comparison', fontsize=20, fontweight='bold')
     
+    # 第一行：卡顿相关指标
     # 1. 卡顿次数
     axes[0, 0].bar(algos, freeze_counts, color='coral', alpha=0.8)
     axes[0, 0].set_ylabel('Freeze Count', fontsize=12)
@@ -384,37 +400,39 @@ def plot_qoe_metrics(data_dict, output_path):
     axes[0, 2].set_title('Freeze Rate (Freeze Time / Total Time)', fontsize=14, fontweight='bold')
     axes[0, 2].grid(axis='y', alpha=0.3)
     
-    # 4. 丢帧数
-    axes[1, 0].bar(algos, frames_dropped, color='skyblue', alpha=0.8)
-    axes[1, 0].set_ylabel('Frames Dropped', fontsize=12)
-    axes[1, 0].set_title('Dropped Frames Count', fontsize=14, fontweight='bold')
+    # 第二行：丢包、帧率、比特率
+    # 4. 丢包率
+    axes[1, 0].bar(algos, packet_loss_rates, color='lightyellow', alpha=0.8, edgecolor='orange')
+    axes[1, 0].set_ylabel('Packet Loss Rate (%)', fontsize=12)
+    axes[1, 0].set_title('Packet Loss Rate', fontsize=14, fontweight='bold')
     axes[1, 0].grid(axis='y', alpha=0.3)
     
-    # 5. 平均延迟
-    axes[1, 1].bar(algos, avg_delays, color='lightgreen', alpha=0.8)
-    axes[1, 1].set_ylabel('Average Delay (ms)', fontsize=12)
-    axes[1, 1].set_title('Average End-to-End Delay', fontsize=14, fontweight='bold')
+    # 5. 平均渲染帧率
+    axes[1, 1].bar(algos, avg_render_fps, color='plum', alpha=0.8)
+    axes[1, 1].set_ylabel('Average FPS', fontsize=12)
+    axes[1, 1].set_title('Average Render Frame Rate', fontsize=14, fontweight='bold')
     axes[1, 1].grid(axis='y', alpha=0.3)
     
-    # 6. 丢包率
-    axes[1, 2].bar(algos, packet_loss_rates, color='lightyellow', alpha=0.8, edgecolor='orange')
-    axes[1, 2].set_ylabel('Packet Loss Rate (%)', fontsize=12)
-    axes[1, 2].set_title('Packet Loss Rate', fontsize=14, fontweight='bold')
+    # 6. 平均比特率
+    axes[1, 2].bar(algos, avg_bitrates, color='lightcyan', alpha=0.8, edgecolor='teal')
+    axes[1, 2].set_ylabel('Bitrate (Mbps)', fontsize=12)
+    axes[1, 2].set_title('Average Video Bitrate', fontsize=14, fontweight='bold')
     axes[1, 2].grid(axis='y', alpha=0.3)
     
-    # 7. 平均渲染帧率
-    axes[2, 0].bar(algos, avg_render_fps, color='plum', alpha=0.8)
-    axes[2, 0].set_ylabel('Average FPS', fontsize=12)
-    axes[2, 0].set_title('Average Render Frame Rate', fontsize=14, fontweight='bold')
+    # 第三行：两个延迟指标
+    # 7. 平均端到端延迟
+    axes[2, 0].bar(algos, avg_e2e_delays, color='lavender', alpha=0.8, edgecolor='purple')
+    axes[2, 0].set_ylabel('E2E Delay (ms)', fontsize=12)
+    axes[2, 0].set_title('Average End-to-End Delay', fontsize=14, fontweight='bold')
     axes[2, 0].grid(axis='y', alpha=0.3)
     
-    # 8. 平均比特率
-    axes[2, 1].bar(algos, avg_bitrates, color='lightcyan', alpha=0.8, edgecolor='teal')
-    axes[2, 1].set_ylabel('Bitrate (Mbps)', fontsize=12)
-    axes[2, 1].set_title('Average Video Bitrate', fontsize=14, fontweight='bold')
+    # 8. 平均网络延迟
+    axes[2, 1].bar(algos, avg_network_delays, color='peachpuff', alpha=0.8, edgecolor='darkorange')
+    axes[2, 1].set_ylabel('Network Delay (ms)', fontsize=12)
+    axes[2, 1].set_title('Average Network Delay', fontsize=14, fontweight='bold')
     axes[2, 1].grid(axis='y', alpha=0.3)
     
-    # 9. 隐藏第三行第三个子图（保持布局对称）
+    # 9. 隐藏第三行第三个子图
     axes[2, 2].axis('off')
     
     for ax in axes.flat:
@@ -462,14 +480,20 @@ def generate_report(data_dict, output_path):
             
             # 延迟指标
             f.write("  【延迟指标】\n")
-            f.write(f"    平均端到端延迟:        {aggregated['avg_delay']:.2f} ms\n")
-            f.write(f"    最小端到端延迟:        {aggregated['min_delay']:.2f} ms\n")
-            f.write(f"    最大端到端延迟:        {aggregated['max_delay']:.2f} ms\n")
-            f.write(f"    95分位端到端延迟:      {aggregated['p95_delay']:.2f} ms\n")
-            f.write(f"    99分位端到端延迟:      {aggregated['p99_delay']:.2f} ms\n")
-            f.write(f"    平均自致延迟:          {aggregated['avg_self_inflicted_delay']:.2f} ms (相对于最小延迟)\n")
+            f.write(f"    平均处理延迟:          {aggregated['avg_delay']:.2f} ms (Jitter Buffer + 解码 + 渲染)\n")
             f.write(f"    平均抖动缓冲延迟:      {aggregated['avg_jb_delay']:.2f} ms\n")
             f.write(f"    平均解码耗时:          {aggregated['avg_decode_time']:.2f} ms\n")
+            
+            # 显示端到端延迟和网络延迟（如果有效）
+            if aggregated['avg_e2e_delay'] > 0:
+                f.write(f"    平均端到端延迟:        {aggregated['avg_e2e_delay']:.2f} ms (发送端到接收端全程)\n")
+            else:
+                f.write(f"    平均端到端延迟:        N/A (无有效数据)\n")
+            
+            if aggregated['avg_network_delay'] > 0:
+                f.write(f"    平均网络延迟:          {aggregated['avg_network_delay']:.2f} ms (网络传输延迟)\n")
+            else:
+                f.write(f"    平均网络延迟:          N/A (无有效数据)\n")
             f.write("\n")
             
             # 用户体验质量
@@ -482,8 +506,9 @@ def generate_report(data_dict, output_path):
             
             # 丢包与重传
             f.write("  【丢包与重传】\n")
-            f.write(f"    累计丢包数(视频层):    {aggregated['total_packet_loss']}\n")
-            f.write(f"    丢包率(网络层):        {aggregated['packet_loss_rate']:.2f} %\n")
+            f.write(f"    累计丢包数:            {aggregated['total_packet_loss']}\n")
+            f.write(f"    累计接收包数:          {aggregated['total_packets_received']}\n")
+            f.write(f"    丢包率:                {aggregated['packet_loss_rate']:.2f} % (cum_loss / (cum_loss + packets_received))\n")
             f.write(f"    NACK请求次数:          {aggregated['total_nack']}\n")
             f.write("\n")
             
@@ -494,10 +519,16 @@ def generate_report(data_dict, output_path):
         
         f.write("=" * 100 + "\n")
         f.write("\n数据来源说明:\n")
-        f.write("  - 视频质量指标: video_receive_stream2.cc 视频层统计日志\n")
-        f.write("  - 延迟指标: video_receive_stream2.cc 的 cur_delay_ms (真实端到端延迟)\n")
-        f.write("  - 丢包率: remote_estimator_proxy.cc 网络层日志（通过序列号差值计算）\n")
-        f.write("  - 累计丢包数: 视频层统计的 cum_loss 字段（可能与网络层不同）\n")
+        f.write("  - 所有指标均来自: video_receive_stream2.cc 视频层统计日志\n")
+        f.write("\n延迟指标说明:\n")
+        f.write("  - 处理延迟 (cur_delay_ms): 接收端处理延迟 = Jitter Buffer + 解码 + 渲染延迟\n")
+        f.write("  - 端到端延迟 (e2e_delay_ms): 发送端到接收端的完整延迟（发送时间戳 -> 渲染时间）\n")
+        f.write("  - 网络延迟 (network_delay_ms): 网络传输延迟（发送端 -> 接收端网络传输时间）\n")
+        f.write("  - 注意: e2e_delay_ms = network_delay_ms + 接收端处理延迟\n")
+        f.write("\n丢包率计算:\n")
+        f.write("  - 公式: cum_loss / (cum_loss + packets_received) × 100%\n")
+        f.write("  - cum_loss: 累计丢失的包数（视频层统计）\n")
+        f.write("  - packets_received: 累计接收的包数（视频层统计）\n")
         f.write("\n评分说明:\n")
         f.write("  - QoE评分综合考虑: 帧率稳定性、延迟、卡顿次数/时长/率、丢包率等因素\n")
         f.write("  - 评分维度: 帧率(30分) + 延迟(25分) + 卡顿(25分) + 丢包(20分)\n")
@@ -634,22 +665,22 @@ def main():
                 print(f"  警告: 未找到视频统计数据\n")
                 continue
             
-            # 解析网络层数据以获取丢包率
-            net_parser = NetworkStatsParser(log_file)
-            
-            # 计算指标（传入网络层丢包率）
-            time_series, aggregated = VideoMetrics.calculate_metrics(
-                parser.video_stats, 
-                packet_loss_rate=net_parser.packet_loss_rate
-            )
+            # 计算指标（丢包率从视频层的 cum_loss 和 packets_received 计算）
+            time_series, aggregated = VideoMetrics.calculate_metrics(parser.video_stats)
             data_dict[algo_name] = (time_series, aggregated)
             
             print(f"  平均比特率: {aggregated['avg_bitrate']:.3f} Mbps")
             print(f"  平均帧率: {aggregated['avg_render_fps']:.1f} FPS")
-            print(f"  平均延迟: {aggregated['avg_delay']:.2f} ms")
-            print(f"  卡顿次数: {aggregated['total_freeze_count']}")
-            print(f"  卡顿率: {aggregated['freeze_rate']:.2f} %")
-            print(f"  丢包率: {aggregated['packet_loss_rate']:.2f} %\n")
+            print(f"  平均处理延迟: {aggregated['avg_delay']:.2f} ms")
+            
+            # 显示端到端延迟和网络延迟
+            if aggregated['avg_e2e_delay'] > 0:
+                print(f"  平均端到端延迟: {aggregated['avg_e2e_delay']:.2f} ms, 平均网络延迟: {aggregated['avg_network_delay']:.2f} ms")
+            else:
+                print(f"  端到端延迟/网络延迟: 无有效数据")
+            
+            print(f"  卡顿次数: {aggregated['total_freeze_count']}, 卡顿率: {aggregated['freeze_rate']:.2f} %")
+            print(f"  丢包: {aggregated['total_packet_loss']} / {aggregated['total_packet_loss'] + aggregated['total_packets_received']}, 丢包率: {aggregated['packet_loss_rate']:.2f} %\n")
             
         except Exception as e:
             print(f"  错误: {e}\n")

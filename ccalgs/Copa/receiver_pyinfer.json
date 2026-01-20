@@ -23,8 +23,8 @@
         },
         "video_file": {
             "enabled": false,
-            "height": 240,
-            "width": 320,
+            "height": 540,
+            "width": 960,
             "fps": 10,
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.yuv"
         }
@@ -44,9 +44,9 @@
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/Copa_outaudio.wav"
         },
         "video": {
-            "width": 320,
-            "height": 240,
-            "fps": 10,
+            "width": 640,
+            "height": 480,
+            "fps": 60,
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/Copa_outvideo.yuv"
         }
     },

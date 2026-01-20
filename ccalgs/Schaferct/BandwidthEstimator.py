@@ -130,6 +130,8 @@ class Estimator:
         Args:
             stats: 包含网络统计的字典，格式参考 PacketInfo
         """
+        if stats.get("type") == "qoe":
+            return
         self.call_count_report += 1
         debug_print(f"report_states 调用#{self.call_count_report}: payload_size={stats.get('payload_size', 0)}, arrival_time={stats.get('arrival_time_ms', 0)}")
         
@@ -170,10 +172,11 @@ class Estimator:
             debug_print("模型未加载，返回默认值")
             return self.bandwidth_prediction
         
-        # 提取网络特征
-        receiving_rate = self.packet_record.calculate_receiving_rate(interval=500)
-        delay = self.packet_record.calculate_average_delay(interval=100)
-        loss_ratio = self.packet_record.calculate_loss_ratio(interval=500)
+        # 提取网络特征 - 只统计视频包（payload_type=125）
+        VIDEO_PAYLOAD_TYPE = 125
+        receiving_rate = self.packet_record.calculate_receiving_rate(interval=500, filter_payload_type=VIDEO_PAYLOAD_TYPE)
+        delay = self.packet_record.calculate_average_delay(interval=100, filter_payload_type=VIDEO_PAYLOAD_TYPE)
+        loss_ratio = self.packet_record.calculate_loss_ratio(interval=500, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         
         # 计算排队延迟
         base_delay = self.packet_record.min_seen_delay

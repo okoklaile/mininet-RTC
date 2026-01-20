@@ -93,6 +93,8 @@ class GCCEstimator(object):
         Args:
             stats: 包含数据包统计信息的字典
         """
+        if stats.get("type") == "qoe":
+            return
         pkt = stats
         packet_info = PacketInfo()
         packet_info.payload_type = pkt["payload_type"]

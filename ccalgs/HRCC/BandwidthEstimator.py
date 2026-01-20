@@ -18,7 +18,7 @@ class Estimator(object):
     混合带宽估计器
     结合GCC基线算法和PPO强化学习模型，实现更智能的带宽估计
     """
-    def __init__(self, model_path="./model/pretrained_model.pth", step_time=60):
+    def __init__(self, model_path="./model/pretrained_model.pth", step_time=200):
         """
         初始化混合带宽估计器
         Args:
@@ -84,6 +84,8 @@ class Estimator(object):
                 "payload_size": uint         # 载荷大小(字节)
         }
         """
+        if stats.get("type") == "qoe":
+            return
         # 构造PacketInfo对象
         packet_info = PacketInfo()
         packet_info.payload_type = stats["payload_type"]
@@ -116,16 +118,19 @@ class Estimator(object):
             bandwidth_prediction: 最终的带宽预测值(bps)
         """
         # 1. 计算当前时间窗口的网络状态指标
-        # 计算接收率(bps)
-        self.receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time)
+        # 视频包的 payload_type 为 125
+        VIDEO_PAYLOAD_TYPE = 125
+        
+        # 计算接收率(bps) - 只统计视频包
+        self.receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         self.receiving_rate_list.append(self.receiving_rate)
         
-        # 计算平均延迟(ms)
-        self.delay = self.packet_record.calculate_average_delay(interval=self.step_time)
+        # 计算平均延迟(ms) - 只统计视频包
+        self.delay = self.packet_record.calculate_average_delay(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         self.delay_list.append(self.delay)
 
-        # 计算丢包率(0.0-1.0)
-        self.loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time)
+        # 计算丢包率(0.0-1.0) - 只统计视频包
+        self.loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         self.loss_ratio_list.append(self.loss_ratio)
 
         # 获取GCC估计器的带宽估计和过载状态
@@ -165,7 +170,10 @@ class Estimator(object):
             self.counter = 0
 
         # 2. 使用RL智能体调整GCC的带宽估计
-        if self.time_to_guide == True:
+        # 临时禁用 RL，只使用 GCC 基线（调试用）
+        USE_RL = False  # 设置为 True 启用 RL，False 只使用 GCC
+        
+        if USE_RL and self.time_to_guide == True:
             # 使用PPO策略网络预测动作
             action, _, _, _ = self.ppo.policy.forward(self.state)
             # action范围约为[0,1]，映射到调整系数 2^(2*action-1)，范围约为[0.5, 2]
@@ -175,7 +183,7 @@ class Estimator(object):
             self.gcc_estimator.change_bandwidth_estimation(self.bandwidth_prediction)
             self.time_to_guide = False
         else:
-            # 非指导时间步，直接使用GCC估计
+            # 非指导时间步或禁用RL时，直接使用GCC估计
             self.bandwidth_prediction = self.gcc_decision
 
         return self.bandwidth_prediction
