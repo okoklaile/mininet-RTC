@@ -202,6 +202,8 @@ class VideoMetrics:
             'packets_received': [s.get('packets_received', 0) for s in video_stats],
             'nack': [s.get('nack', 0) for s in video_stats],
             'decode_ms': [s.get('decode_ms', 0) for s in video_stats],
+            'width': [s.get('width', 0) for s in video_stats],  # 视频宽度
+            'height': [s.get('height', 0) for s in video_stats],  # 视频高度
         }
         
         # 计算丢包率时间序列（百分比）
@@ -228,6 +230,21 @@ class VideoMetrics:
         valid_e2e_delays = [d for d in time_series['e2e_delay_ms'] if d > 0]
         valid_network_delays = [d for d in time_series['network_delay_ms'] if d > 0]
         
+        # 计算分辨率相关指标
+        widths = time_series['width']
+        heights = time_series['height']
+        avg_width = np.mean([w for w in widths if w > 0])
+        avg_height = np.mean([h for h in heights if h > 0])
+        
+        # 计算分辨率变化次数（分辨率切换）
+        resolution_changes = 0
+        for i in range(1, len(widths)):
+            if widths[i] != widths[i-1] or heights[i] != heights[i-1]:
+                resolution_changes += 1
+        
+        # 计算平均像素数（用于QoE评分）
+        avg_pixels = avg_width * avg_height if avg_width > 0 and avg_height > 0 else 0
+        
         aggregated = {
             'avg_bitrate': np.mean(time_series['total_bps']),
             'avg_render_fps': np.mean(time_series['render_fps']),
@@ -246,6 +263,10 @@ class VideoMetrics:
             'total_nack': time_series['nack'][-1] if time_series['nack'] else 0,
             'avg_decode_time': np.mean(time_series['decode_ms']),
             'resolution': f"{video_stats[0].get('width', 0)}x{video_stats[0].get('height', 0)}",
+            'avg_width': avg_width,
+            'avg_height': avg_height,
+            'avg_pixels': avg_pixels,
+            'resolution_changes': resolution_changes,
             'total_duration': total_duration_s,
         }
         
@@ -364,6 +385,56 @@ def plot_fps_comparison(data_dict, output_path, smooth=False, smooth_window=5):
     plt.close()
 
 
+def plot_resolution_timeline(data_dict, output_path, smooth=False, smooth_window=5):
+    """绘制分辨率随时间变化的图表"""
+    fig, axes = plt.subplots(1, len(data_dict), figsize=(6*len(data_dict), 5))
+    
+    if len(data_dict) == 1:
+        axes = [axes]
+    
+    for idx, (algo_name, (time_series, aggregated)) in enumerate(data_dict.items()):
+        ax = axes[idx]
+        time = time_series['time']
+        
+        widths = time_series['width']
+        heights = time_series['height']
+        
+        # 计算像素总数（百万像素）
+        pixels = [w * h / 1e6 for w, h in zip(widths, heights)]
+        
+        if smooth and len(pixels) > smooth_window:
+            pixels = smooth_data(pixels, smooth_window)
+        
+        ax.plot(time, pixels, label='Resolution (MPixels)', linewidth=2, alpha=0.8, color='purple')
+        
+        # 标注分辨率变化点
+        resolution_changes = aggregated['resolution_changes']
+        if resolution_changes > 0:
+            for i in range(1, len(widths)):
+                if widths[i] != widths[i-1] or heights[i] != heights[i-1]:
+                    ax.axvline(x=time[i], color='red', linestyle='--', alpha=0.5, linewidth=1)
+                    ax.text(time[i], max(pixels) * 0.9, f'{int(widths[i])}x{int(heights[i])}', 
+                           rotation=90, va='top', fontsize=8, color='red')
+        
+        ax.set_xlabel('Time (s)', fontsize=12)
+        ax.set_ylabel('Resolution (MPixels)', fontsize=12)
+        ax.set_title(f'{algo_name} - Video Resolution\n(Changes: {resolution_changes})', 
+                    fontsize=14, fontweight='bold')
+        ax.legend(loc='best', fontsize=11)
+        ax.grid(True, alpha=0.3)
+        
+        # 在图表上显示平均分辨率
+        avg_res = aggregated['resolution']
+        ax.text(0.02, 0.98, f'Avg: {avg_res}', transform=ax.transAxes,
+               fontsize=10, verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
+    print(f"✓ 分辨率时间线图已保存: {output_path}")
+    plt.close()
+
+
 def plot_qoe_metrics(data_dict, output_path):
     """绘制QoE（用户体验质量）指标柱状图"""
     algos = list(data_dict.keys())
@@ -377,6 +448,8 @@ def plot_qoe_metrics(data_dict, output_path):
     avg_bitrates = [data_dict[a][1]['avg_bitrate'] for a in algos]  # 平均比特率
     avg_e2e_delays = [data_dict[a][1]['avg_e2e_delay'] if data_dict[a][1]['avg_e2e_delay'] > 0 else 0 for a in algos]  # 端到端延迟
     avg_network_delays = [data_dict[a][1]['avg_network_delay'] if data_dict[a][1]['avg_network_delay'] > 0 else 0 for a in algos]  # 网络延迟
+    avg_pixels = [data_dict[a][1]['avg_pixels'] / 1e6 for a in algos]  # 平均像素数（百万）
+    resolution_changes = [data_dict[a][1]['resolution_changes'] for a in algos]  # 分辨率变化次数
     
     fig, axes = plt.subplots(3, 3, figsize=(18, 12))
     fig.suptitle('Quality of Experience (QoE) Metrics Comparison', fontsize=20, fontweight='bold')
@@ -432,8 +505,20 @@ def plot_qoe_metrics(data_dict, output_path):
     axes[2, 1].set_title('Average Network Delay', fontsize=14, fontweight='bold')
     axes[2, 1].grid(axis='y', alpha=0.3)
     
-    # 9. 隐藏第三行第三个子图
-    axes[2, 2].axis('off')
+    # 9. 平均分辨率（百万像素）
+    colors_res = ['lightblue' if rc == 0 else 'lightcoral' for rc in resolution_changes]
+    bars = axes[2, 2].bar(algos, avg_pixels, color=colors_res, alpha=0.8, edgecolor='navy')
+    axes[2, 2].set_ylabel('Resolution (MPixels)', fontsize=12)
+    axes[2, 2].set_title('Average Video Resolution', fontsize=14, fontweight='bold')
+    axes[2, 2].grid(axis='y', alpha=0.3)
+    
+    # 在柱状图上标注分辨率变化次数
+    for i, (bar, changes) in enumerate(zip(bars, resolution_changes)):
+        if changes > 0:
+            height = bar.get_height()
+            axes[2, 2].text(bar.get_x() + bar.get_width()/2., height,
+                          f'Δ{changes}',
+                          ha='center', va='bottom', fontsize=9, color='red', fontweight='bold')
     
     for ax in axes.flat:
         if ax.get_visible():
@@ -466,7 +551,9 @@ def generate_report(data_dict, output_path):
             f.write("-" * 90 + "\n")
             
             # 基本信息
-            f.write(f"  视频分辨率:              {aggregated['resolution']}\n")
+            f.write(f"  视频分辨率:              {aggregated['resolution']} (平均: {aggregated['avg_width']:.0f}x{aggregated['avg_height']:.0f})\n")
+            f.write(f"  分辨率变化次数:          {aggregated['resolution_changes']} 次\n")
+            f.write(f"  平均像素数:              {aggregated['avg_pixels']/1e6:.2f} MPixels\n")
             f.write(f"  统计样本数:              {len(time_series['time'])} 个数据点\n")
             f.write(f"  总播放时长:              {aggregated['total_duration']:.2f} s\n")
             f.write("\n")
@@ -530,8 +617,11 @@ def generate_report(data_dict, output_path):
         f.write("  - cum_loss: 累计丢失的包数（视频层统计）\n")
         f.write("  - packets_received: 累计接收的包数（视频层统计）\n")
         f.write("\n评分说明:\n")
-        f.write("  - QoE评分综合考虑: 帧率稳定性、延迟、卡顿次数/时长/率、丢包率等因素\n")
-        f.write("  - 评分维度: 帧率(30分) + 延迟(25分) + 卡顿(25分) + 丢包(20分)\n")
+        f.write("  - QoE评分综合考虑: 帧率稳定性、延迟、卡顿次数/时长/率、丢包率、分辨率等因素\n")
+        f.write("  - 评分维度: 帧率(25分) + 延迟(20分) + 卡顿(25分) + 丢包(20分) + 分辨率(10分)\n")
+        f.write("  - 分辨率评分: 基于平均像素数(8分) + 分辨率稳定性(2分)\n")
+        f.write("    * 720p及以上: 8分, 480p(VGA): 6分, 360p: 4分\n")
+        f.write("    * 无分辨率变化: +2分, ≤2次变化: +1分\n")
         f.write("  - 评分范围: 0-100，分数越高表示用户体验越好\n")
         f.write("=" * 100 + "\n")
     
@@ -543,40 +633,41 @@ def calculate_qoe_score(aggregated):
     计算简单的QoE评分 (0-100)
     
     评分维度:
-    - 帧率 (30分): 接近30fps得分高
-    - 延迟 (25分): 延迟越低得分越高
+    - 帧率 (25分): 接近30fps得分高
+    - 延迟 (20分): 延迟越低得分越高
     - 卡顿 (25分): 无卡顿得满分
     - 丢包 (20分): 无丢包得满分
+    - 分辨率 (10分): 分辨率越高得分越高，稳定性加分
     """
     score = 0.0
     
-    # 1. 帧率评分 (满分30)
+    # 1. 帧率评分 (满分25)
     fps = aggregated['avg_render_fps']
     if fps >= 30:
-        score += 30
-    elif fps >= 24:
         score += 25
+    elif fps >= 24:
+        score += 22
     elif fps >= 20:
-        score += 20
+        score += 18
     elif fps >= 15:
-        score += 15
+        score += 13
     else:
-        score += max(0, fps / 30 * 30)
+        score += max(0, fps / 30 * 25)
     
-    # 2. 延迟评分 (满分25)
+    # 2. 延迟评分 (满分20)
     delay = aggregated['avg_delay']
     if delay <= 50:
-        score += 25
-    elif delay <= 100:
         score += 20
+    elif delay <= 100:
+        score += 16
     elif delay <= 150:
-        score += 15
+        score += 12
     elif delay <= 200:
-        score += 10
-    elif delay <= 300:
         score += 8
+    elif delay <= 300:
+        score += 6
     else:
-        score += max(0, 25 - (delay - 300) / 30)
+        score += max(0, 20 - (delay - 300) / 30)
     
     # 3. 卡顿评分 (满分25)
     freeze_count = aggregated['total_freeze_count']
@@ -616,6 +707,30 @@ def calculate_qoe_score(aggregated):
         score += 8
     else:
         score += max(0, 20 - packet_loss_rate)
+    
+    # 5. 分辨率评分 (满分10)
+    avg_pixels = aggregated['avg_pixels']
+    resolution_changes = aggregated['resolution_changes']
+    
+    # 根据像素数评分 (8分)
+    # 720p (1280x720 = 0.92M), 480p (640x480 = 0.31M), 360p (640x360 = 0.23M)
+    if avg_pixels >= 0.9:  # >= 720p
+        score += 8
+    elif avg_pixels >= 0.6:  # 接近 720p
+        score += 7
+    elif avg_pixels >= 0.3:  # 480p (VGA)
+        score += 6
+    elif avg_pixels >= 0.2:  # 360p
+        score += 4
+    else:  # < 360p
+        score += max(0, avg_pixels / 0.3 * 6)
+    
+    # 分辨率稳定性评分 (2分)
+    if resolution_changes == 0:
+        score += 2  # 分辨率完全稳定
+    elif resolution_changes <= 2:
+        score += 1  # 轻微变化
+    # 否则不加分
     
     return min(100, max(0, score))
 
@@ -671,6 +786,7 @@ def main():
             
             print(f"  平均比特率: {aggregated['avg_bitrate']:.3f} Mbps")
             print(f"  平均帧率: {aggregated['avg_render_fps']:.1f} FPS")
+            print(f"  平均分辨率: {aggregated['resolution']} (变化次数: {aggregated['resolution_changes']})")
             print(f"  平均处理延迟: {aggregated['avg_delay']:.2f} ms")
             
             # 显示端到端延迟和网络延迟
@@ -706,11 +822,15 @@ def main():
     fps_path = os.path.join(RESULT_DIR, f"video_fps_comparison{suffix}.pdf")
     plot_fps_comparison(data_dict, fps_path, args.smooth, args.window)
     
-    # 3. QoE指标图
+    # 3. 分辨率时间线图
+    resolution_path = os.path.join(RESULT_DIR, f"video_resolution_timeline{suffix}.pdf")
+    plot_resolution_timeline(data_dict, resolution_path, args.smooth, args.window)
+    
+    # 4. QoE指标图
     qoe_path = os.path.join(RESULT_DIR, "video_qoe_metrics.pdf")
     plot_qoe_metrics(data_dict, qoe_path)
     
-    # 4. 生成报告
+    # 5. 生成报告
     report_path = os.path.join(RESULT_DIR, "video_quality_report.txt")
     generate_report(data_dict, report_path)
     
@@ -718,10 +838,11 @@ def main():
     print("分析完成！")
     print("=" * 100)
     print(f"\n结果保存在: {RESULT_DIR}/")
-    print("  - video_quality_report.txt          # 视频质量统计报告")
-    print(f"  - video_multi_metrics{suffix}.pdf       # 多指标对比图")
-    print(f"  - video_fps_comparison{suffix}.pdf      # 帧率对比图")
-    print("  - video_qoe_metrics.pdf             # QoE指标图")
+    print("  - video_quality_report.txt               # 视频质量统计报告")
+    print(f"  - video_multi_metrics{suffix}.pdf            # 多指标对比图")
+    print(f"  - video_fps_comparison{suffix}.pdf           # 帧率对比图")
+    print(f"  - video_resolution_timeline{suffix}.pdf      # 分辨率时间线图")
+    print("  - video_qoe_metrics.pdf                  # QoE指标图（含分辨率）")
     print("\n使用提示:")
     print("  python3 eval/eval_video_stats.py                    # 显示原始数据")
     print("  python3 eval/eval_video_stats.py --smooth           # 使用平滑处理")

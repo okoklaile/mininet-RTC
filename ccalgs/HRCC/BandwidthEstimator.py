@@ -171,7 +171,7 @@ class Estimator(object):
 
         # 2. 使用RL智能体调整GCC的带宽估计
         # 临时禁用 RL，只使用 GCC 基线（调试用）
-        USE_RL = False  # 设置为 True 启用 RL，False 只使用 GCC
+        USE_RL = True # 设置为 True 启用 RL，False 只使用 GCC
         
         if USE_RL and self.time_to_guide == True:
             # 使用PPO策略网络预测动作
