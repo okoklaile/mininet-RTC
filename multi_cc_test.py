@@ -34,6 +34,7 @@ ALL_ALGORITHMS = [
     'GCC', 
     'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
     'Cubic', 'FARC', 'Gemini', 'HRCC', 'RL-DelayGCC', 'Schaferct',
+    'BC-GCC',
 ]
 
 # 可测试的算法列表 - 注释掉不想测试的算法
@@ -48,12 +49,13 @@ ALGORITHMS = [
     #'Copa',
     #'Copa+',
     #'Cubic',
-    #'PCC'
+    #'PCC',
+    'BC-GCC'
 ]
 
 # 默认网络配置（当没有使用trace时）
 PORT = 8000
-DEFAULT_BANDWIDTH = '10Mbps'
+DEFAULT_BANDWIDTH = '1Mbps'
 DEFAULT_DELAY = '30ms'
 DEFAULT_LOSS = 1
 QUEUE_SIZE = 1000

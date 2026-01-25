@@ -741,23 +741,25 @@ def calculate_qoe_score(aggregated):
 
 def main():
     parser = argparse.ArgumentParser(description='分析 VideoReceiveStream 统计数据')
+    # --- 新增参数 ---
+    parser.add_argument('--input', type=str, help='指定要分析的单个日志文件路径')
+    # ----------------
     parser.add_argument('--smooth', action='store_true', help='启用平滑处理')
     parser.add_argument('--window', type=int, default=5, help='平滑窗口大小')
     args = parser.parse_args()
-    
-    print("=" * 100)
-    print("视频流质量分析工具 (VideoReceiveStream Stats Analyzer)")
-    if args.smooth:
-        print(f"平滑处理: 已启用 (窗口大小={args.window})")
+
+    # ... 省略中间的 print ...
+
+    # --- 修改查找逻辑 ---
+    if args.input:
+        if os.path.exists(args.input):
+            log_files = [args.input]
+        else:
+            print(f"错误: 找不到文件 {args.input}")
+            return
     else:
-        print("平滑处理: 未启用")
-    print("=" * 100 + "\n")
-    
-    # 确保结果目录存在
-    os.makedirs(RESULT_DIR, exist_ok=True)
-    
-    # 查找所有日志文件
-    log_files = glob.glob(os.path.join(OUTPUT_DIR, '*_receiver.log'))
+        # 保持原有的逻辑：查找 OUTPUT_DIR 下的所有文件
+        log_files = glob.glob(os.path.join(OUTPUT_DIR, '*_receiver.log'))
     
     if not log_files:
         print(f"错误: 在 {OUTPUT_DIR} 中没有找到日志文件")

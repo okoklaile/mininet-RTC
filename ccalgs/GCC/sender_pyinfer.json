@@ -1,6 +1,6 @@
 {
     "serverless_connection": {
-        "autoclose": 1170,
+        "autoclose": 60,
         "sender": {
             "enabled": true,
             "dest_ip": "10.0.0.1",
