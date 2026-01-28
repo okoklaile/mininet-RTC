@@ -137,7 +137,7 @@ class Estimator(object):
         count = 0
         for pkt in self.packets_list:
             # 修改点：增加 payload_type 检查，仅使用视频包计算 RTT
-            if pkt.payload_type == 125:
+            if pkt.payload_type == 98:
                 # 使用抵消法计算延迟，消除时钟偏移影响
                 if self.timer_delta is None:
                     # 第一个包：初始化 timer_delta

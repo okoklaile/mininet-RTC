@@ -212,8 +212,8 @@ class Estimator:
             return int(self.bandwidth_prediction)
         
         # 1. 从 packet_record 中提取网络统计特征
-        # 视频包的 payload_type 为 125，只统计视频包
-        VIDEO_PAYLOAD_TYPE = 125
+        # 视频包的 payload_type 为 98，只统计视频包
+        VIDEO_PAYLOAD_TYPE = 98
         receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         delay = self.packet_record.calculate_average_delay(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)
@@ -416,7 +416,7 @@ def main():
         packet_stats = {
             "send_time_ms": send_time,
             "arrival_time_ms": current_time,
-            "payload_type": 125,  # 视频包
+            "payload_type": 98,  # 视频包
             "sequence_number": sequence_number,
             "ssrc": 12345,
             "padding_length": 0,

@@ -1,6 +1,6 @@
 {
     "serverless_connection": {
-        "autoclose": 60,
+        "autoclose": 120,
         "sender": {
             "enabled": false
         },
@@ -14,8 +14,8 @@
     "video_source": {
         "video_disabled": {
             "enabled": true,
-            "height": 720,
-            "width": 1280,
+            "height": 1080,
+            "width": 1920,
             "fps": 30
         },
         "webcam": {
@@ -23,10 +23,16 @@
         },
         "video_file": {
             "enabled": false,
-            "height": 540,
-            "width": 960,
-            "fps": 10,
+            "height": 1080,
+            "width": 1920,
+            "fps": 60,
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.yuv"
+        },
+        "fake_frames": {
+            "enabled": false,
+            "height": 1080,
+            "width": 1920,
+            "fps": 60
         }
     },
     "audio_source": {

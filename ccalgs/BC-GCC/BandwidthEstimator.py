@@ -17,10 +17,19 @@ from model import GCCBC_LSTM
 from config import Config
 
 
+class Config32D(Config):
+    """32维特征配置（用于trial3模型）"""
+    TOTAL_FEATURE_DIM = 32
+    RESERVED_FEATURES = Config.RESERVED_FEATURES + [
+        'custom_5', 'custom_6', 'custom_7', 'custom_8',
+        'custom_9', 'custom_10', 'custom_11', 'custom_12'
+    ]
+
+
 class Estimator(object):
     """BC-GCC 带宽估计器"""
     
-    def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/BC-GCC/trial2.pt", step_time=200):
+    def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/BC-GCC/trial3.pt", step_time=200):
         """
         初始化估计器
         Args:
@@ -28,7 +37,8 @@ class Estimator(object):
             step_time: 时间步长(毫秒)，默认200ms
         """
         # 1. 加载配置和模型检查点
-        self.config = Config()
+        # trial3使用32维输入，trial2使用24维输入
+        self.config = Config32D()  # 使用32维配置
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         checkpoint = torch.load(model_path, map_location=self.device)
         
@@ -56,8 +66,8 @@ class Estimator(object):
         self.bandwidth_prediction = 300000.0  # 当前带宽预测(bps)
         
         # 6. 历史数据窗口（用于计算统计特征）
-        self.delay_history = deque(maxlen=Config.WINDOW_SIZE)  # 延迟历史
-        self.recv_rate_history = deque(maxlen=Config.WINDOW_SIZE)  # 接收速率历史
+        self.delay_history = deque(maxlen=self.config.WINDOW_SIZE)  # 延迟历史
+        self.recv_rate_history = deque(maxlen=self.config.WINDOW_SIZE)  # 接收速率历史
         self.min_delay_seen = float('inf')  # 观察到的最小延迟（基线RTT）
 
     def reset(self):
@@ -108,14 +118,14 @@ class Estimator(object):
         """
         计算并返回带宽估计值
         
-        模型输入格式 (24维特征向量):
+        模型输入格式 (32维特征向量):
         核心特征 (16维):
         - 索引0-5: 基础特征 (delay, loss_ratio, receiving_rate, prev_bandwidth, delay_gradient, throughput_effective)
         - 索引6-11: 延迟统计 (delay_mean, delay_std, delay_min, queue_delay, delay_accel, delay_trend)
         - 索引12: 丢包变化 (loss_change)
         - 索引13-15: 带宽利用率 (bw_utilization, recv_rate_mean, recv_rate_std)
-        保留字段 (8维):
-        - 索引16-23: reserved (全为0)
+        保留字段 (16维):
+        - 索引16-31: reserved (全为0)
         
         模型输出格式:
         - bandwidth_prediction (bps) - 归一化值，需要反归一化
@@ -123,8 +133,8 @@ class Estimator(object):
         Returns:
             bandwidth_prediction: 带宽预测值(bps)
         """
-        # 视频包的 payload_type 为 125
-        VIDEO_PAYLOAD_TYPE = 125
+        # 视频包的 payload_type 为 98
+        VIDEO_PAYLOAD_TYPE = 98
         
         # 1. 计算基础网络指标
         # 延迟 (ms)
@@ -178,7 +188,7 @@ class Estimator(object):
         recv_rate_mean = np.mean(self.recv_rate_history) if len(self.recv_rate_history) > 0 else receiving_rate
         recv_rate_std = np.std(self.recv_rate_history) if len(self.recv_rate_history) > 1 else 0.0
         
-        # 7. 构造模型输入特征向量 [24维] - 原始值
+        # 7. 构造模型输入特征向量 [32维] - 原始值
         features_raw = np.array([
             # 基础特征 (0-5)
             delay,                  # 0: 延迟 (ms)
@@ -204,14 +214,15 @@ class Estimator(object):
             recv_rate_mean,         # 14: 平均接收速率 (bps)
             recv_rate_std,          # 15: 接收速率标准差 (bps)
             
-            # 保留字段 (16-23)
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            # 保留字段 (16-31) - trial3使用32维，需要16个保留字段
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # 16-23: 原有8个保留字段
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0   # 24-31: 新增8个保留字段
         ], dtype=np.float32)
         
         # 8. 归一化特征（根据训练时使用的归一化参数）
         features_norm = self._normalize_features(features_raw)
         
-        # 9. 转换为PyTorch张量并添加序列维度 [1, 1, 24]
+        # 9. 转换为PyTorch张量并添加序列维度 [1, 1, 32]
         # 注意：模型期望 [batch, seq_len, feature_dim] 格式
         input_tensor = torch.from_numpy(features_norm).unsqueeze(0).unsqueeze(0).to(self.device)
         
@@ -250,9 +261,9 @@ class Estimator(object):
         归一化输入特征（根据Config中定义的归一化参数）
         
         Args:
-            features_raw: 原始特征向量 [24]
+            features_raw: 原始特征向量 [32]
         Returns:
-            features_norm: 归一化后的特征向量 [24]
+            features_norm: 归一化后的特征向量 [32]
         """
         features_norm = features_raw.copy()
         
@@ -285,7 +296,7 @@ class Estimator(object):
                 else:
                     features_norm[i] = 0.0
         
-        # 保留字段（索引16-23）已经是0，不需要归一化
+        # 保留字段（索引16-31）已经是0，不需要归一化
         
         return features_norm
     

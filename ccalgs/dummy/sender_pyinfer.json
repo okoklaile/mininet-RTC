@@ -3,7 +3,7 @@
         "autoclose": 60,
         "sender": {
             "enabled": true,
-            "dest_ip": "10.0.2.1",
+            "dest_ip": "10.0.1.1",
             "dest_port": 8000
         },
         "receiver": {
@@ -14,9 +14,9 @@
     "video_source": {
         "video_disabled": {
             "enabled": true,
-            "height": 480,
-            "width": 640,
-            "fps": 60
+            "height": 720,
+            "width": 1280,
+            "fps": 30
         },
         "webcam": {
             "enabled": false
@@ -39,7 +39,16 @@
         }
     },
     "save_to_file": {
-        "enabled": false
+        "enabled": false,
+        "audio": {
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/dummy_inaudio.wav"
+        },
+        "video": {
+            "width": 640,
+            "height": 480,
+            "fps": 60,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/dummy_invideo.yuv"
+        }
     },
     "logging": {
         "enabled": false,

@@ -1,6 +1,6 @@
 {
     "serverless_connection": {
-        "autoclose": 60,
+        "autoclose": 120,
         "sender": {
             "enabled": true,
             "dest_ip": "10.0.2.1",
@@ -14,19 +14,25 @@
     "video_source": {
         "video_disabled": {
             "enabled": true,
-            "height": 480,
-            "width": 640,
-            "fps": 60
+            "height": 1080,
+            "width": 1920,
+            "fps": 30
         },
         "webcam": {
             "enabled": false
         },
         "video_file": {
             "enabled": false,
-            "height": 240,
-            "width": 320,
-            "fps": 10,
+            "height": 1080,
+            "width": 1920,
+            "fps": 60,
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.yuv"
+        },
+        "fake_frames": {
+            "enabled": false,
+            "height": 1080,
+            "width": 1920,
+            "fps": 60
         }
     },
     "audio_source": {
@@ -51,7 +57,7 @@
         }
     },
     "logging": {
-        "enabled": false,
-        "log_output_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/sender.log"
+        "enabled": true,
+        "log_output_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/FARC_sender.log"
     }
 }

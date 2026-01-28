@@ -1,0 +1,936 @@
+{
+    "uplink": {
+        "trace_pattern": [
+            {
+                "duration": 5,
+                "capacity": 0.0
+            },
+            {
+                "duration": 1000,
+                "capacity": 2617.116
+            },
+            {
+                "duration": 1000,
+                "capacity": 5262.592
+            },
+            {
+                "duration": 1001,
+                "capacity": 5945.474525474526
+            },
+            {
+                "duration": 999,
+                "capacity": 6077.46946946947
+            },
+            {
+                "duration": 1000,
+                "capacity": 6897.716
+            },
+            {
+                "duration": 1000,
+                "capacity": 5997.952
+            },
+            {
+                "duration": 1001,
+                "capacity": 5025.814185814186
+            },
+            {
+                "duration": 1000,
+                "capacity": 5028.584
+            },
+            {
+                "duration": 999,
+                "capacity": 5065.069069069069
+            },
+            {
+                "duration": 1000,
+                "capacity": 5008.104
+            },
+            {
+                "duration": 1001,
+                "capacity": 5058.133866133866
+            },
+            {
+                "duration": 999,
+                "capacity": 5018.126126126126
+            },
+            {
+                "duration": 1001,
+                "capacity": 5063.416583416583
+            },
+            {
+                "duration": 999,
+                "capacity": 4602.630630630631
+            },
+            {
+                "duration": 1000,
+                "capacity": 4852.8
+            },
+            {
+                "duration": 1001,
+                "capacity": 5116.1398601398605
+            },
+            {
+                "duration": 999,
+                "capacity": 5553.717717717717
+            },
+            {
+                "duration": 1000,
+                "capacity": 5075.22
+            },
+            {
+                "duration": 1001,
+                "capacity": 4996.083916083916
+            },
+            {
+                "duration": 999,
+                "capacity": 5058.762762762763
+            },
+            {
+                "duration": 1000,
+                "capacity": 5034.884
+            },
+            {
+                "duration": 1001,
+                "capacity": 5042.465534465535
+            },
+            {
+                "duration": 999,
+                "capacity": 5022.874874874875
+            },
+            {
+                "duration": 1000,
+                "capacity": 5055.96
+            },
+            {
+                "duration": 1001,
+                "capacity": 5030.00999000999
+            },
+            {
+                "duration": 999,
+                "capacity": 3389.3493493493493
+            },
+            {
+                "duration": 1000,
+                "capacity": 5005.312
+            },
+            {
+                "duration": 1000,
+                "capacity": 6720.404
+            },
+            {
+                "duration": 1001,
+                "capacity": 5007.948051948052
+            },
+            {
+                "duration": 999,
+                "capacity": 5058.862862862863
+            },
+            {
+                "duration": 1000,
+                "capacity": 3980.216
+            },
+            {
+                "duration": 1000,
+                "capacity": 4845.568
+            },
+            {
+                "duration": 1000,
+                "capacity": 6243.456
+            },
+            {
+                "duration": 1000,
+                "capacity": 5066.38
+            },
+            {
+                "duration": 1001,
+                "capacity": 5036.535464535465
+            },
+            {
+                "duration": 1000,
+                "capacity": 3797.816
+            },
+            {
+                "duration": 1000,
+                "capacity": 5367.808
+            },
+            {
+                "duration": 1000,
+                "capacity": 5962.332
+            },
+            {
+                "duration": 999,
+                "capacity": 5043.1671671671675
+            },
+            {
+                "duration": 1000,
+                "capacity": 3912.492
+            },
+            {
+                "duration": 1000,
+                "capacity": 2232.32
+            },
+            {
+                "duration": 1001,
+                "capacity": 5098.517482517483
+            },
+            {
+                "duration": 999,
+                "capacity": 7271.527527527527
+            },
+            {
+                "duration": 1000,
+                "capacity": 6657.82
+            },
+            {
+                "duration": 1000,
+                "capacity": 5063.036
+            },
+            {
+                "duration": 1000,
+                "capacity": 2543.68
+            },
+            {
+                "duration": 1001,
+                "capacity": 982.0579420579421
+            },
+            {
+                "duration": 999,
+                "capacity": 5051.323323323323
+            },
+            {
+                "duration": 1000,
+                "capacity": 7297.024
+            },
+            {
+                "duration": 1002,
+                "capacity": 7346.023952095808
+            },
+            {
+                "duration": 998,
+                "capacity": 4909.799599198397
+            },
+            {
+                "duration": 1001,
+                "capacity": 3388.17982017982
+            },
+            {
+                "duration": 999,
+                "capacity": 3385.5695695695695
+            },
+            {
+                "duration": 1001,
+                "capacity": 3257.5024975024976
+            },
+            {
+                "duration": 999,
+                "capacity": 3826.7547547547547
+            },
+            {
+                "duration": 1000,
+                "capacity": 2873.936
+            },
+            {
+                "duration": 1000,
+                "capacity": 2664.996
+            },
+            {
+                "duration": 1001,
+                "capacity": 2619.2407592407594
+            },
+            {
+                "duration": 999,
+                "capacity": 1994.3383383383384
+            },
+            {
+                "duration": 1000,
+                "capacity": 1647.256
+            },
+            {
+                "duration": 1000,
+                "capacity": 1527.284
+            },
+            {
+                "duration": 1000,
+                "capacity": 1407.312
+            },
+            {
+                "duration": 1000,
+                "capacity": 1113.448
+            },
+            {
+                "duration": 1000,
+                "capacity": 885.636
+            },
+            {
+                "duration": 1000,
+                "capacity": 603.904
+            },
+            {
+                "duration": 1000,
+                "capacity": 25.612
+            },
+            {
+                "duration": 1000,
+                "capacity": 0.0
+            },
+            {
+                "duration": 1000,
+                "capacity": 0.0
+            },
+            {
+                "duration": 1001,
+                "capacity": 0.0
+            },
+            {
+                "duration": 1000,
+                "capacity": 4695.136
+            },
+            {
+                "duration": 999,
+                "capacity": 5102.202202202202
+            },
+            {
+                "duration": 1000,
+                "capacity": 4921.784
+            },
+            {
+                "duration": 1000,
+                "capacity": 5040.22
+            },
+            {
+                "duration": 1000,
+                "capacity": 4959.604
+            },
+            {
+                "duration": 1000,
+                "capacity": 5094.12
+            },
+            {
+                "duration": 1000,
+                "capacity": 5092.072
+            },
+            {
+                "duration": 1000,
+                "capacity": 4453.424
+            },
+            {
+                "duration": 1000,
+                "capacity": 5644.076
+            },
+            {
+                "duration": 1000,
+                "capacity": 4898.192
+            },
+            {
+                "duration": 1000,
+                "capacity": 5113.9
+            },
+            {
+                "duration": 1001,
+                "capacity": 5035.288711288711
+            },
+            {
+                "duration": 999,
+                "capacity": 5101.817817817818
+            },
+            {
+                "duration": 1000,
+                "capacity": 3432.304
+            },
+            {
+                "duration": 1000,
+                "capacity": 5259.264
+            },
+            {
+                "duration": 1000,
+                "capacity": 6396.828
+            },
+            {
+                "duration": 1000,
+                "capacity": 4977.384
+            },
+            {
+                "duration": 1001,
+                "capacity": 3812.995004995005
+            },
+            {
+                "duration": 999,
+                "capacity": 4675.087087087087
+            },
+            {
+                "duration": 1000,
+                "capacity": 4847.616
+            },
+            {
+                "duration": 1001,
+                "capacity": 6879.112887112887
+            },
+            {
+                "duration": 999,
+                "capacity": 4978.346346346347
+            },
+            {
+                "duration": 1000,
+                "capacity": 5043.412
+            },
+            {
+                "duration": 1000,
+                "capacity": 4442.724
+            },
+            {
+                "duration": 1000,
+                "capacity": 3518.464
+            },
+            {
+                "duration": 1000,
+                "capacity": 5138.676
+            },
+            {
+                "duration": 1000,
+                "capacity": 2729.7
+            },
+            {
+                "duration": 1000,
+                "capacity": 4177.92
+            },
+            {
+                "duration": 1000,
+                "capacity": 6376.92
+            },
+            {
+                "duration": 1000,
+                "capacity": 4685.648
+            },
+            {
+                "duration": 1001,
+                "capacity": 4812.939060939061
+            },
+            {
+                "duration": 999,
+                "capacity": 4906.986986986987
+            },
+            {
+                "duration": 1000,
+                "capacity": 2404.616
+            },
+            {
+                "duration": 1000,
+                "capacity": 7127.688
+            },
+            {
+                "duration": 1001,
+                "capacity": 4250.737262737262
+            },
+            {
+                "duration": 1000,
+                "capacity": 3083.016
+            },
+            {
+                "duration": 999,
+                "capacity": 4831.87987987988
+            },
+            {
+                "duration": 1000,
+                "capacity": 2941.904
+            },
+            {
+                "duration": 1000,
+                "capacity": 3666.64
+            },
+            {
+                "duration": 1001,
+                "capacity": 3145.7822177822177
+            },
+            {
+                "duration": 999,
+                "capacity": 2862.6706706706705
+            },
+            {
+                "duration": 1000,
+                "capacity": 2454.008
+            },
+            {
+                "duration": 1000,
+                "capacity": 2756.66
+            },
+            {
+                "duration": 1001,
+                "capacity": 2951.8641358641357
+            },
+            {
+                "duration": 999,
+                "capacity": 3088.5325325325325
+            },
+            {
+                "duration": 1000,
+                "capacity": 3092.44
+            },
+            {
+                "duration": 1001,
+                "capacity": 2876.4515484515487
+            },
+            {
+                "duration": 999,
+                "capacity": 2986.1101101101103
+            },
+            {
+                "duration": 1000,
+                "capacity": 2964.408
+            },
+            {
+                "duration": 1000,
+                "capacity": 2920.96
+            },
+            {
+                "duration": 1000,
+                "capacity": 2941.336
+            },
+            {
+                "duration": 1001,
+                "capacity": 2761.418581418581
+            },
+            {
+                "duration": 1000,
+                "capacity": 2640.26
+            },
+            {
+                "duration": 999,
+                "capacity": 3208.4444444444443
+            },
+            {
+                "duration": 1000,
+                "capacity": 3049.176
+            },
+            {
+                "duration": 1000,
+                "capacity": 3417.18
+            },
+            {
+                "duration": 1000,
+                "capacity": 3173.764
+            },
+            {
+                "duration": 1000,
+                "capacity": 2895.832
+            },
+            {
+                "duration": 1000,
+                "capacity": 3723.624
+            },
+            {
+                "duration": 1000,
+                "capacity": 3429.468
+            },
+            {
+                "duration": 1000,
+                "capacity": 2255.048
+            },
+            {
+                "duration": 1000,
+                "capacity": 3498.06
+            },
+            {
+                "duration": 1000,
+                "capacity": 3125.248
+            },
+            {
+                "duration": 1000,
+                "capacity": 3989.496
+            },
+            {
+                "duration": 1000,
+                "capacity": 2951.784
+            },
+            {
+                "duration": 1001,
+                "capacity": 2783.040959040959
+            },
+            {
+                "duration": 999,
+                "capacity": 2805.193193193193
+            },
+            {
+                "duration": 1000,
+                "capacity": 2914.116
+            },
+            {
+                "duration": 1001,
+                "capacity": 2977.294705294705
+            },
+            {
+                "duration": 999,
+                "capacity": 2991.015015015015
+            },
+            {
+                "duration": 1000,
+                "capacity": 3108.98
+            },
+            {
+                "duration": 1000,
+                "capacity": 3047.828
+            },
+            {
+                "duration": 1001,
+                "capacity": 2588.31968031968
+            },
+            {
+                "duration": 1000,
+                "capacity": 3831.016
+            },
+            {
+                "duration": 999,
+                "capacity": 3493.6216216216217
+            },
+            {
+                "duration": 1001,
+                "capacity": 3429.7182817182816
+            },
+            {
+                "duration": 999,
+                "capacity": 3251.931931931932
+            },
+            {
+                "duration": 1000,
+                "capacity": 3928.248
+            },
+            {
+                "duration": 1000,
+                "capacity": 4406.904
+            },
+            {
+                "duration": 1000,
+                "capacity": 4011.984
+            },
+            {
+                "duration": 1000,
+                "capacity": 3874.36
+            },
+            {
+                "duration": 1000,
+                "capacity": 4370.552
+            },
+            {
+                "duration": 1001,
+                "capacity": 4136.907092907093
+            },
+            {
+                "duration": 999,
+                "capacity": 4821.717717717717
+            },
+            {
+                "duration": 1000,
+                "capacity": 5151.576
+            },
+            {
+                "duration": 1000,
+                "capacity": 5035.48
+            },
+            {
+                "duration": 1000,
+                "capacity": 3566.024
+            },
+            {
+                "duration": 1000,
+                "capacity": 2049.052
+            },
+            {
+                "duration": 1001,
+                "capacity": 1338.053946053946
+            },
+            {
+                "duration": 1000,
+                "capacity": 5433.344
+            },
+            {
+                "duration": 1000,
+                "capacity": 7884.8
+            },
+            {
+                "duration": 999,
+                "capacity": 4459.587587587587
+            },
+            {
+                "duration": 1000,
+                "capacity": 3528.084
+            },
+            {
+                "duration": 1001,
+                "capacity": 3924.13986013986
+            },
+            {
+                "duration": 999,
+                "capacity": 4263.107107107107
+            },
+            {
+                "duration": 1000,
+                "capacity": 3650.78
+            },
+            {
+                "duration": 1000,
+                "capacity": 3100.4
+            },
+            {
+                "duration": 1001,
+                "capacity": 3121.2267732267733
+            },
+            {
+                "duration": 999,
+                "capacity": 3416.868868868869
+            },
+            {
+                "duration": 1000,
+                "capacity": 2430.704
+            },
+            {
+                "duration": 1001,
+                "capacity": 2432.4435564435566
+            },
+            {
+                "duration": 1000,
+                "capacity": 1667.036
+            },
+            {
+                "duration": 1000,
+                "capacity": 4116.196
+            },
+            {
+                "duration": 1000,
+                "capacity": 4473.7
+            },
+            {
+                "duration": 999,
+                "capacity": 4104.824824824825
+            },
+            {
+                "duration": 1000,
+                "capacity": 3956.276
+            },
+            {
+                "duration": 1000,
+                "capacity": 3988.732
+            },
+            {
+                "duration": 1000,
+                "capacity": 4111.856
+            },
+            {
+                "duration": 1001,
+                "capacity": 3656.1198801198802
+            },
+            {
+                "duration": 999,
+                "capacity": 5368.648648648648
+            },
+            {
+                "duration": 1000,
+                "capacity": 6149.084
+            },
+            {
+                "duration": 1000,
+                "capacity": 7189.972
+            },
+            {
+                "duration": 1001,
+                "capacity": 5940.763236763237
+            },
+            {
+                "duration": 1000,
+                "capacity": 3106.816
+            },
+            {
+                "duration": 1000,
+                "capacity": 7002.112
+            },
+            {
+                "duration": 999,
+                "capacity": 6119.0990990990995
+            },
+            {
+                "duration": 1000,
+                "capacity": 4753.024
+            },
+            {
+                "duration": 1000,
+                "capacity": 3863.848
+            },
+            {
+                "duration": 1001,
+                "capacity": 3222.0859140859143
+            },
+            {
+                "duration": 1000,
+                "capacity": 2256.516
+            },
+            {
+                "duration": 999,
+                "capacity": 5804.392392392392
+            },
+            {
+                "duration": 1001,
+                "capacity": 5023.56043956044
+            },
+            {
+                "duration": 999,
+                "capacity": 4977.393393393393
+            },
+            {
+                "duration": 1001,
+                "capacity": 4533.834165834166
+            },
+            {
+                "duration": 999,
+                "capacity": 5613.997997997998
+            },
+            {
+                "duration": 1000,
+                "capacity": 5038.824
+            },
+            {
+                "duration": 1010,
+                "capacity": 5001.742574257426
+            },
+            {
+                "duration": 991,
+                "capacity": 4720.932391523714
+            },
+            {
+                "duration": 999,
+                "capacity": 3064.8248248248246
+            },
+            {
+                "duration": 1001,
+                "capacity": 7356.623376623376
+            },
+            {
+                "duration": 1000,
+                "capacity": 5038.824
+            },
+            {
+                "duration": 1000,
+                "capacity": 5040.172
+            },
+            {
+                "duration": 999,
+                "capacity": 4716.656656656657
+            },
+            {
+                "duration": 1000,
+                "capacity": 4009.984
+            },
+            {
+                "duration": 1001,
+                "capacity": 5710.257742257742
+            },
+            {
+                "duration": 999,
+                "capacity": 5736.620620620621
+            },
+            {
+                "duration": 1001,
+                "capacity": 5018.977022977023
+            },
+            {
+                "duration": 999,
+                "capacity": 5043.867867867868
+            },
+            {
+                "duration": 1001,
+                "capacity": 3366.817182817183
+            },
+            {
+                "duration": 999,
+                "capacity": 6712.828828828829
+            },
+            {
+                "duration": 1000,
+                "capacity": 5021.116
+            },
+            {
+                "duration": 1000,
+                "capacity": 5059.228
+            },
+            {
+                "duration": 1001,
+                "capacity": 5031.096903096903
+            },
+            {
+                "duration": 999,
+                "capacity": 3185.777777777778
+            },
+            {
+                "duration": 1000,
+                "capacity": 6219.776
+            },
+            {
+                "duration": 1000,
+                "capacity": 5710.708
+            },
+            {
+                "duration": 1001,
+                "capacity": 5031.9000999001
+            },
+            {
+                "duration": 999,
+                "capacity": 4917.573573573573
+            },
+            {
+                "duration": 1000,
+                "capacity": 3315.256
+            },
+            {
+                "duration": 1000,
+                "capacity": 4401.344
+            },
+            {
+                "duration": 1000,
+                "capacity": 2957.512
+            },
+            {
+                "duration": 1001,
+                "capacity": 970.9370629370629
+            },
+            {
+                "duration": 1000,
+                "capacity": 4697.78
+            },
+            {
+                "duration": 999,
+                "capacity": 3735.611611611612
+            },
+            {
+                "duration": 1000,
+                "capacity": 4342.048
+            },
+            {
+                "duration": 1001,
+                "capacity": 4286.993006993007
+            },
+            {
+                "duration": 999,
+                "capacity": 2648.072072072072
+            },
+            {
+                "duration": 1000,
+                "capacity": 990.78
+            },
+            {
+                "duration": 1000,
+                "capacity": 861.372
+            },
+            {
+                "duration": 1001,
+                "capacity": 2051.6523476523475
+            },
+            {
+                "duration": 999,
+                "capacity": 1635.4114114114113
+            },
+            {
+                "duration": 1000,
+                "capacity": 788.58
+            }
+        ]
+    },
+    "type": "video",
+    "downlink": {}
+}

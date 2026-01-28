@@ -36,22 +36,24 @@ from pathlib import Path
 ALL_ALGORITHMS = [
     'GCC', 
     'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
-    'Cubic', 'FARC', 'Gemini', 'HRCC', 'RL-DelayGCC', 'Schaferct',
+    'Cubic', 'FARC', 'Gemini', 'HRCC', 'Schaferct',
+    'BC-GCC',
 ]
 
 # 可测试的算法列表 - 注释掉不想测试的算法
 ALGORITHMS = [
     'GCC', 
-    'BBR', 
+    #'BBR', 
     #'dummy',
-    'FARC', 
+    #'FARC', 
     #'Gemini', 
-    'HRCC', 
-    'Schaferct',
+    #'HRCC', 
+    #'Schaferct',
     #'Copa',
-    'Copa+',
+    #'Copa+',
     #'Cubic',
-    #'PCC'
+    #'PCC',
+    'BC-GCC'
 ]
 
 # 默认网络配置

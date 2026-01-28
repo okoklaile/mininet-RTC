@@ -172,8 +172,8 @@ class Estimator:
             debug_print("模型未加载，返回默认值")
             return self.bandwidth_prediction
         
-        # 提取网络特征 - 只统计视频包（payload_type=125）
-        VIDEO_PAYLOAD_TYPE = 125
+        # 提取网络特征 - 只统计视频包（payload_type=98）
+        VIDEO_PAYLOAD_TYPE = 98
         receiving_rate = self.packet_record.calculate_receiving_rate(interval=500, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         delay = self.packet_record.calculate_average_delay(interval=100, filter_payload_type=VIDEO_PAYLOAD_TYPE)
         loss_ratio = self.packet_record.calculate_loss_ratio(interval=500, filter_payload_type=VIDEO_PAYLOAD_TYPE)

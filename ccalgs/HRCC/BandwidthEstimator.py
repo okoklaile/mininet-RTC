@@ -118,8 +118,8 @@ class Estimator(object):
             bandwidth_prediction: 最终的带宽预测值(bps)
         """
         # 1. 计算当前时间窗口的网络状态指标
-        # 视频包的 payload_type 为 125
-        VIDEO_PAYLOAD_TYPE = 125
+        # 视频包的 payload_type 为 98
+        VIDEO_PAYLOAD_TYPE = 98
         
         # 计算接收率(bps) - 只统计视频包
         self.receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time, filter_payload_type=VIDEO_PAYLOAD_TYPE)

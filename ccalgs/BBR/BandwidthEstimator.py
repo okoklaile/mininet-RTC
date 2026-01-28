@@ -108,7 +108,7 @@ class Estimator(object):
 
     def update_model_and_stats(self):
         # 过滤视频包 (Payload 126)
-        video_packets = [p for p in self.packets_list if p.payload_type == 125]
+        video_packets = [p for p in self.packets_list if p.payload_type == 98]
         if not video_packets:
             return
 

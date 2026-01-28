@@ -222,9 +222,9 @@ class GCCEstimator(object):
         min_sequence_number, max_sequence_number = 0, 0
         if len(self.packets_list) == 0:  # 没有收到数据包
             return -1
-        # 统计有效数据包（payload_type == 125）
+        # 统计有效数据包（payload_type == 98）
         for i in range(len(self.packets_list)):
-            if self.packets_list[i].payload_type == 125:
+            if self.packets_list[i].payload_type == 98:
                 if not flag:
                     min_sequence_number = self.packets_list[i].sequence_number
                     max_sequence_number = self.packets_list[i].sequence_number
