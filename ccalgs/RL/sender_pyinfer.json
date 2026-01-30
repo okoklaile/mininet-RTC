@@ -1,0 +1,63 @@
+{
+    "serverless_connection": {
+        "autoclose": 120,
+        "sender": {
+            "enabled": true,
+            "dest_ip": "10.0.0.1",
+            "dest_port": 8000
+        },
+        "receiver": {
+            "enabled": false
+        }
+    },
+    "bwe_feedback_duration": 200,
+    "video_source": {
+        "video_disabled": {
+            "enabled": true,
+            "height": 1080,
+            "width": 1920,
+            "fps": 30
+        },
+        "webcam": {
+            "enabled": false
+        },
+        "video_file": {
+            "enabled": false,
+            "height": 1080,
+            "width": 1920,
+            "fps": 60,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.yuv"
+        },
+        "fake_frames": {
+            "enabled": false,
+            "height": 1080,
+            "width": 1920,
+            "fps": 60
+        }
+    },
+    "audio_source": {
+        "microphone": {
+            "enabled": false
+        },
+        "audio_file": {
+            "enabled": true,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.wav"
+        }
+    },
+    "save_to_file": {
+        "enabled": false,
+        "audio": {
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/RL_inaudio.wav"
+        },
+        "video": {
+            "width": 640,
+            "height": 480,
+            "fps": 60,
+            "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/RL_invideo.yuv"
+        }
+    },
+    "logging": {
+        "enabled": true,
+        "log_output_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/RL_sender.log"
+    }
+}

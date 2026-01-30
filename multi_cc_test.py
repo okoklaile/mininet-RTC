@@ -34,23 +34,24 @@ ALL_ALGORITHMS = [
     'GCC', 
     'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
     'Cubic', 'FARC', 'Gemini', 'HRCC', 'RL-DelayGCC', 'Schaferct',
-    'BC-GCC',
+    'BC-GCC','RL'
 ]
 
 # 可测试的算法列表 - 注释掉不想测试的算法
 ALGORITHMS = [
-    'GCC', 
-    'BBR', 
+    #'GCC', 
+    #'BBR', 
     #'dummy',
-    'FARC', 
+    #'FARC', 
     #'Gemini', 
-    'HRCC', 
-    'Schaferct',
+    #'HRCC', 
+    #'Schaferct',
     #'Copa',
-    'Copa+',
+    #'Copa+',
     #'Cubic',
     #'PCC',
-    'BC-GCC'
+    #'BC-GCC',
+    'RL'
 ]
 
 # 默认网络配置（当没有使用trace时）
