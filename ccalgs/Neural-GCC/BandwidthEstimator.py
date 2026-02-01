@@ -132,7 +132,7 @@ class Estimator(object):
         
         self.delay_history = deque(maxlen=self.config.WINDOW_SIZE)
         self.recv_rate_history = deque(maxlen=self.config.WINDOW_SIZE)
-        self.feature_buffer = deque(maxlen=self.config.WINDOW_SIZE)
+        self.feature_history = deque(maxlen=self.config.WINDOW_SIZE)
         self.min_delay_seen = float('inf')
         
         # 4. RL 状态变量
@@ -188,7 +188,7 @@ class Estimator(object):
         self.prev_prev_bandwidth = 300000.0
         self.delay_history.clear()
         self.recv_rate_history.clear()
-        self.feature_buffer.clear()
+        self.feature_history.clear()
         self.min_delay_seen = float('inf')
         
         if self.use_rl:
@@ -307,18 +307,20 @@ class Estimator(object):
         
         features_norm = self._normalize_features(features_raw)
         
-        # 2. 更新序列缓冲区 (解决推理与 BC 训练序列长度不一致导致的震荡)
-        self.feature_buffer.append(features_norm)
+        # 更新特征历史并构造 10-step 序列
+        self.feature_history.append(features_norm)
         
-        # 构造序列输入 [WINDOW_SIZE, feature_dim]
-        if len(self.feature_buffer) < self.config.WINDOW_SIZE:
-            # 填充: 用第一帧补齐
-            padding = [self.feature_buffer[0]] * (self.config.WINDOW_SIZE - len(self.feature_buffer))
-            features_seq = np.array(padding + list(self.feature_buffer), dtype=np.float32)
+        # 构造序列输入 (如果不足 10 step 则进行补零)
+        seq_len = self.config.WINDOW_SIZE
+        current_features = list(self.feature_history)
+        if len(current_features) < seq_len:
+            # 补零
+            padding = [np.zeros_like(features_norm) for _ in range(seq_len - len(current_features))]
+            state_seq = np.array(padding + current_features, dtype=np.float32)
         else:
-            features_seq = np.array(self.feature_buffer, dtype=np.float32)
+            state_seq = np.array(current_features, dtype=np.float32)
 
-        # 3. PPO Fine-tuning 逻辑
+        # 2. PPO Fine-tuning 逻辑
         if self.use_rl:
             # 计算上一步的奖励并存储经验
             if self.last_state is not None:
@@ -326,8 +328,8 @@ class Estimator(object):
                                               self.last_bandwidth_estimation, self.prev_prev_bandwidth)
                 
                 # 存储: (state, action, reward, next_state, done, log_prob)
-                # 注意：这里的 state 和 next_state 都是 [WINDOW_SIZE, dim] 的序列
-                self.storage.append((self.last_state, self.last_action, reward, features_seq, False, self.last_log_prob))
+                # 注意：这里的 state 是 10-step 序列
+                self.storage.append((self.last_state, self.last_action, reward, state_seq, False, self.last_log_prob))
                 self.step_counter += 1
                 
                 # 执行 PPO 更新
@@ -337,22 +339,21 @@ class Estimator(object):
                     self.step_counter = 0
                     self._check_and_save_model()
 
-        # 4. 前向传播 (Base Model 作为 Actor)
-        # 即使在训练，也使用 Masked Input (为了保持与预训练时的一致性)
-        features_input_seq = features_seq.copy()
-        features_input_seq[:, 16:] = 0.0 
+        # 3. 前向传播 (Base Model 作为 Actor)
+        # 对序列进行 Mask (只保留前 16 维特征，与预训练保持一致)
+        input_seq = state_seq.copy()
+        input_seq[:, 16:] = 0.0 
         
-        input_tensor = torch.from_numpy(features_input_seq).unsqueeze(0).to(self.device) # [1, 10, 32]
+        input_tensor = torch.from_numpy(input_seq).unsqueeze(0).to(self.device) # [1, 10, 32]
         
         # 采样动作 (Sampling for exploration)
         if self.use_rl:
-            # 在训练模式下，我们需要从分布中采样
+            # 在训练模式下，我们需要从分布中采样，而不是直接取均值
             mu, _ = self.base_model.forward(input_tensor) # [1, 1]
             
             # 使用一个固定或可学习的 log_std
             if not hasattr(self, 'log_std'):
-                # 进一步减小初始 sigma 到 0.05 (log(0.05) ≈ -3.0)
-                self.log_std = torch.full((1, 1), -3.0).to(self.device)
+                self.log_std = torch.zeros(1, 1).to(self.device) # 初始 sigma = 1.0
             
             std = torch.exp(self.log_std)
             dist = torch.distributions.Normal(mu, std)
@@ -362,18 +363,18 @@ class Estimator(object):
             
             bw_norm = action.item()
             
-            # 保存状态用于下一步 (保存整个序列)
-            self.last_state = features_seq
-            self.last_action = action.detach() 
+            # 保存状态用于下一步
+            self.last_state = state_seq
+            self.last_action = action.detach() # 存储 Tensor
             self.last_log_prob = log_prob.detach()
             
         else:
-            # 推理模式
+            # 推理模式，直接取确定性输出
             with torch.no_grad():
                 output, _ = self.base_model.predict(input_tensor)
                 bw_norm = output.cpu().item()
 
-        # 5. 反归一化
+        # 4. 反归一化
         if bw_norm < 10.0: # 简单的阈值判断是否为归一化值
             final_bw = bw_norm * self.config.NORM_STATS['bandwidth_prediction']['max']
         else:
@@ -397,13 +398,38 @@ class Estimator(object):
         delay = self.packet_record.calculate_average_delay(self.step_time, VIDEO_PAYLOAD_TYPE)
         loss_ratio = self.packet_record.calculate_loss_ratio(self.step_time, VIDEO_PAYLOAD_TYPE)
         receiving_rate = self.packet_record.calculate_receiving_rate(self.step_time, VIDEO_PAYLOAD_TYPE)
+        
         delay_gradient = delay - self.prev_delay
+        throughput_effective = receiving_rate * (1.0 - loss_ratio)
         
         self.delay_history.append(delay)
         self.recv_rate_history.append(receiving_rate)
-        if delay > 0:
-            self.min_delay_seen = min(self.min_delay_seen, delay)
-            
+        if delay > 0: self.min_delay_seen = min(self.min_delay_seen, delay)
+        
+        # 计算特征向量用于更新 feature_history
+        delay_mean = np.mean(self.delay_history) if len(self.delay_history) > 0 else delay
+        delay_std = np.std(self.delay_history) if len(self.delay_history) > 1 else 0.0
+        delay_min = self.min_delay_seen if self.min_delay_seen != float('inf') else delay
+        queue_delay = max(0, delay - delay_min)
+        delay_accel = delay_gradient - self.prev_delay_gradient
+        delay_trend = self._calculate_trend(self.delay_history)
+        loss_change = loss_ratio - self.prev_loss_ratio
+        bw_utilization = receiving_rate / self.prev_bandwidth if self.prev_bandwidth > 0 else 0.0
+        recv_rate_mean = np.mean(self.recv_rate_history) if len(self.recv_rate_history) > 0 else receiving_rate
+        recv_rate_std = np.std(self.recv_rate_history) if len(self.recv_rate_history) > 1 else 0.0
+        
+        features_raw = np.array([
+            delay, loss_ratio, receiving_rate, self.prev_bandwidth, delay_gradient, throughput_effective,
+            delay_mean, delay_std, delay_min, queue_delay, delay_accel, delay_trend,
+            loss_change,
+            bw_utilization, recv_rate_mean, recv_rate_std,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ], dtype=np.float32)
+        
+        features_norm = self._normalize_features(features_raw)
+        self.feature_history.append(features_norm)
+        
         self.prev_delay = delay
         self.prev_delay_gradient = delay_gradient
         self.prev_loss_ratio = loss_ratio
@@ -421,9 +447,7 @@ class Estimator(object):
         old_log_probs = torch.cat([x[5] for x in self.storage]).view(-1, 1)
         
         # Mask input for states (consistent with forward)
-        # states shape: [batch, WINDOW_SIZE, feature_dim]
         states[:, :, 16:] = 0.0
-        # states = states.unsqueeze(1) # 不再需要，因为已经是 [batch, 10, 32]
         
         # 计算优势函数 (Advantage) - 简化版：Advantage = Reward (假设 baseline=0)
         # 更严谨的做法需要一个 Critic Network 来估计 Value Function
@@ -488,12 +512,19 @@ class Estimator(object):
 
     def _calculate_reward(self, receiving_rate, loss_ratio, delay, current_prediction, last_prediction):
         """
-        在线强化学习奖励函数 (平滑版：解决剧烈震荡和过度下调问题)
+        在线强化学习奖励函数
+        
+        参数:
+        receiving_rate: 当前步的接收速率 (bps)
+        loss_ratio: 当前丢包率 (0.0-1.0)
+        delay: 当前平均延迟 (ms)
+        current_prediction: 产生当前状态的预测值 (bps)
+        last_prediction: 上一步的预测值 (bps)，用于计算波动惩罚
         """
         
-        # 1. 吞吐量收益归一化
-        min_bw = 80000.0
-        max_bw = self.config.NORM_STATS['receiving_rate']['max']
+        # 1. 吞吐量收益归一化 (使用 log 尺度)
+        min_bw = 80000.0  # 80kbps
+        max_bw = self.config.NORM_STATS['receiving_rate']['max'] # 10Mbps
         
         def liner_to_log(val):
             val_mbps = np.clip(val / 1000000.0, min_bw / 1000000.0, max_bw / 1000000.0)
@@ -503,31 +534,20 @@ class Estimator(object):
 
         r_tp = liner_to_log(receiving_rate)
         
-        # 2. 延迟惩罚 (引入容忍窗口)
-        # 150ms 以内不惩罚，500ms 达到最大惩罚，避免在操作点附近反复横跳
-        if delay < 150.0:
-            p_delay = 0.0
-        else:
-            p_delay = min((delay - 150.0) / 350.0, 1.0)
+        # 2. 延迟惩罚 (归一化)
+        max_delay = self.config.NORM_STATS['delay']['max']
+        p_delay = min(delay / max_delay, 1.0)
         
-        # 3. 丢包惩罚 (稍微回调权重)
+        # 3. 丢包惩罚
         p_loss = loss_ratio
         
-        # 4. 过估计惩罚 (增加容忍度)
-        # 给模型 15% 的波动空间，避免微小的测量误差导致 BWE 暴跌
-        p_overestimation = 0.0
-        if current_prediction > receiving_rate * 1.15 and receiving_rate > 0:
-            over_ratio = (current_prediction - receiving_rate) / receiving_rate
-            p_overestimation = min(over_ratio, 1.0)
-        
-        # 5. 稳定性惩罚 (显著加重权重)
-        # 震荡太厉害，必须强力要求模型保持 BWE 连续性
+        # 4. 稳定性惩罚 (码率波动)
         delta_prediction = abs(current_prediction - last_prediction)
         p_stability = liner_to_log(delta_prediction)
         
         # --- 最终奖励组合 ---
-        # 权重配比：吞吐量(1.0) vs 延迟(1.5) vs 丢包(4.0) vs 过估计(0.3) vs 稳定性(0.5)
-        reward = r_tp - 1.5 * p_delay - 4.0 * p_loss - 0.3 * p_overestimation - 0.5 * p_stability
+        # reward = throughput - 1.5 * delay_penalty - 1.5 * loss_penalty - 0.02 * stability_penalty
+        reward = r_tp - 1.5 * p_delay - 1.5 * p_loss - 0.02 * p_stability
         
         return round(float(reward), 4)
 

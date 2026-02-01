@@ -82,7 +82,7 @@ class Estimator(object):
         
         self.delay_history = deque(maxlen=self.config.WINDOW_SIZE)
         self.recv_rate_history = deque(maxlen=self.config.WINDOW_SIZE)
-        self.feature_buffer = deque(maxlen=self.config.WINDOW_SIZE)
+        self.feature_history = deque(maxlen=self.config.WINDOW_SIZE)
         self.min_delay_seen = float('inf')
         
         # --- Slow Start / GCC Init ---
@@ -126,7 +126,7 @@ class Estimator(object):
         self.bandwidth_prediction = 300000.0
         self.delay_history.clear()
         self.recv_rate_history.clear()
-        self.feature_buffer.clear()
+        self.feature_history.clear()
         self.min_delay_seen = float('inf')
         
         # Reset GCC state
@@ -245,18 +245,20 @@ class Estimator(object):
         
         features_norm = self._normalize_features(features_raw)
         
-        # Update sequence buffer for temporal consistency
-        self.feature_buffer.append(features_norm)
+        # 更新特征历史并构造 10-step 序列
+        self.feature_history.append(features_norm)
         
-        # Construct sequence input [batch=1, seq=WINDOW_SIZE, feature_dim]
-        if len(self.feature_buffer) < self.config.WINDOW_SIZE:
-            # Padding: fill with the first available frame
-            padding = [self.feature_buffer[0]] * (self.config.WINDOW_SIZE - len(self.feature_buffer))
-            features_seq = np.array(padding + list(self.feature_buffer), dtype=np.float32)
+        # 构造序列输入 (如果不足 10 step 则进行补零)
+        seq_len = self.config.WINDOW_SIZE
+        current_features = list(self.feature_history)
+        if len(current_features) < seq_len:
+            # 补零
+            padding = [np.zeros_like(features_norm) for _ in range(seq_len - len(current_features))]
+            state_seq = np.array(padding + current_features, dtype=np.float32)
         else:
-            features_seq = np.array(self.feature_buffer, dtype=np.float32)
-            
-        input_tensor = torch.from_numpy(features_seq).unsqueeze(0).to(self.device)
+            state_seq = np.array(current_features, dtype=np.float32)
+
+        input_tensor = torch.from_numpy(state_seq).unsqueeze(0).to(self.device) # [1, 10, 32]
         
         with torch.no_grad():
             output, _ = self.model.predict(input_tensor)
@@ -279,20 +281,20 @@ class Estimator(object):
         return self.bandwidth_prediction
 
     def _update_model_history_in_background(self):
-        """When in slow start, we still need to update model feature history and sequence buffer"""
+        """When in slow start, we still need to update model feature history"""
         VIDEO_PAYLOAD_TYPE = 98
         delay = self.packet_record.calculate_average_delay(self.step_time, VIDEO_PAYLOAD_TYPE)
         loss_ratio = self.packet_record.calculate_loss_ratio(self.step_time, VIDEO_PAYLOAD_TYPE)
         receiving_rate = self.packet_record.calculate_receiving_rate(self.step_time, VIDEO_PAYLOAD_TYPE)
+        
         delay_gradient = delay - self.prev_delay
         throughput_effective = receiving_rate * (1.0 - loss_ratio)
         
         self.delay_history.append(delay)
         self.recv_rate_history.append(receiving_rate)
-        if delay > 0:
-            self.min_delay_seen = min(self.min_delay_seen, delay)
-            
-        # Also need to update feature_buffer to maintain temporal consistency
+        if delay > 0: self.min_delay_seen = min(self.min_delay_seen, delay)
+        
+        # 计算特征向量用于更新 feature_history
         delay_mean = np.mean(self.delay_history) if len(self.delay_history) > 0 else delay
         delay_std = np.std(self.delay_history) if len(self.delay_history) > 1 else 0.0
         delay_min = self.min_delay_seen if self.min_delay_seen != float('inf') else delay
@@ -303,7 +305,7 @@ class Estimator(object):
         bw_utilization = receiving_rate / self.prev_bandwidth if self.prev_bandwidth > 0 else 0.0
         recv_rate_mean = np.mean(self.recv_rate_history) if len(self.recv_rate_history) > 0 else receiving_rate
         recv_rate_std = np.std(self.recv_rate_history) if len(self.recv_rate_history) > 1 else 0.0
-
+        
         features_raw = np.array([
             delay, loss_ratio, receiving_rate, self.prev_bandwidth, delay_gradient, throughput_effective,
             delay_mean, delay_std, delay_min, queue_delay, delay_accel, delay_trend,
@@ -314,8 +316,8 @@ class Estimator(object):
         ], dtype=np.float32)
         
         features_norm = self._normalize_features(features_raw)
-        self.feature_buffer.append(features_norm)
-
+        self.feature_history.append(features_norm)
+        
         self.prev_delay = delay
         self.prev_delay_gradient = delay_gradient
         self.prev_loss_ratio = loss_ratio
