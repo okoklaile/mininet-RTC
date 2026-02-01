@@ -34,12 +34,12 @@ ALL_ALGORITHMS = [
     'GCC', 
     'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
     'Cubic', 'FARC', 'Gemini', 'HRCC', 'RL-DelayGCC', 'Schaferct',
-    'BC-GCC','RL'
+    'BC-GCC','RL','Neural-GCC'
 ]
 
 # 可测试的算法列表 - 注释掉不想测试的算法
 ALGORITHMS = [
-    #'GCC', 
+    'GCC', 
     #'BBR', 
     #'dummy',
     #'FARC', 
@@ -50,19 +50,20 @@ ALGORITHMS = [
     #'Copa+',
     #'Cubic',
     #'PCC',
-    #'BC-GCC',
-    'RL'
+    'BC-GCC',
+    #'RL',
+    'Neural-GCC'
 ]
 
 # 默认网络配置（当没有使用trace时）
 PORT = 8000
 DEFAULT_BANDWIDTH = '5Mbps'
 DEFAULT_DELAY = '30ms'
-DEFAULT_LOSS = 1
-QUEUE_SIZE = 1000
+DEFAULT_LOSS = 0
+QUEUE_SIZE = 50
 
 # 测试时长（秒）- 如果使用trace，会根据trace总时长自动调整
-TEST_DURATION = 60*2
+TEST_DURATION = 60*10
 
 # 路径配置
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

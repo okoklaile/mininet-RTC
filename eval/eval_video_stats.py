@@ -52,10 +52,11 @@ class VideoStatsParser:
     def __init__(self, log_path):
         self.log_path = log_path
         self.video_stats = []
+        self.bwe_stats = []
         self.parse_video_stats()
     
     def parse_video_stats(self):
-        """从日志中提取 VideoReceiveStream stats 数据"""
+        """从日志中提取 VideoReceiveStream stats 数据和 BWE 数据"""
         if not os.path.exists(self.log_path):
             raise ValueError(f"日志文件不存在: {self.log_path}")
         
@@ -64,45 +65,49 @@ class VideoStatsParser:
             r'VideoReceiveStream stats: (\d+), \{(.+?)\}(?:, interframe_delay_max_ms: (\d+)\})?'
         )
         
+        # 正则表达式匹配 BWE 行
+        bwe_pattern = re.compile(r'Send back BWE estimation: ([\d.e+]+) at time: (\d+)')
+        
         with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
-                if 'VideoReceiveStream stats:' not in line:
-                    continue
+                # 1. 解析 VideoReceiveStream stats
+                if 'VideoReceiveStream stats:' in line:
+                    try:
+                        match = re.search(r'VideoReceiveStream stats: (\d+), \{(.+)\}', line)
+                        if match:
+                            timestamp = int(match.group(1))
+                            stats_str = match.group(2)
+                            stats = {'timestamp': timestamp}
+                            kv_pattern = re.compile(r'(\w+):\s*(-?\d+(?:\.\d+)?)')
+                            for kv_match in kv_pattern.finditer(stats_str):
+                                key = kv_match.group(1)
+                                value_str = kv_match.group(2)
+                                try:
+                                    if '.' in value_str:
+                                        stats[key] = float(value_str)
+                                    else:
+                                        stats[key] = int(value_str)
+                                except ValueError:
+                                    stats[key] = value_str
+                            self.video_stats.append(stats)
+                    except Exception as e:
+                        print(f"  ⚠️ 解析视频统计行时出错: {e}")
                 
-                try:
-                    # 提取时间戳和统计数据
-                    match = re.search(r'VideoReceiveStream stats: (\d+), \{(.+)\}', line)
-                    if not match:
-                        continue
-                    
-                    timestamp = int(match.group(1))
-                    stats_str = match.group(2)
-                    
-                    # 解析键值对
-                    stats = {'timestamp': timestamp}
-                    
-                    # 使用正则表达式提取所有键值对
-                    kv_pattern = re.compile(r'(\w+):\s*(-?\d+(?:\.\d+)?)')
-                    for kv_match in kv_pattern.finditer(stats_str):
-                        key = kv_match.group(1)
-                        value_str = kv_match.group(2)
-                        
-                        # 尝试转换为数值
-                        try:
-                            if '.' in value_str:
-                                stats[key] = float(value_str)
-                            else:
-                                stats[key] = int(value_str)
-                        except ValueError:
-                            stats[key] = value_str
-                    
-                    self.video_stats.append(stats)
-                
-                except Exception as e:
-                    print(f"  ⚠️ 解析视频统计行时出错: {e}")
-                    continue
+                # 2. 解析 Send back BWE estimation
+                elif 'Send back BWE estimation:' in line:
+                    try:
+                        match = bwe_pattern.search(line)
+                        if match:
+                            bwe_val = float(match.group(1))
+                            timestamp = int(match.group(2))
+                            self.bwe_stats.append({
+                                'timestamp': timestamp,
+                                'bwe': bwe_val
+                            })
+                    except Exception as e:
+                        pass
         
-        print(f"  找到 {len(self.video_stats)} 条视频统计记录")
+        print(f"  找到 {len(self.video_stats)} 条视频统计记录, {len(self.bwe_stats)} 条 BWE 记录")
 
 
 class NetworkStatsParser:
@@ -165,13 +170,13 @@ class VideoMetrics:
     """计算视频质量指标"""
     
     @staticmethod
-    def calculate_metrics(video_stats, packet_loss_rate=None):
+    def calculate_metrics(video_stats, bwe_stats=None):
         """
         计算各种视频质量指标
         
         参数:
         - video_stats: 视频统计数据列表
-        - packet_loss_rate: 网络层丢包率（百分比）- 已废弃，改用视频层数据计算
+        - bwe_stats: BWE 统计数据列表
         
         返回:
         - 时间序列数据字典
@@ -205,6 +210,16 @@ class VideoMetrics:
             'width': [s.get('width', 0) for s in video_stats],  # 视频宽度
             'height': [s.get('height', 0) for s in video_stats],  # 视频高度
         }
+        
+        # 处理 BWE 数据
+        if bwe_stats:
+            bwe_times = [(s['timestamp'] - base_time) / 1000.0 for s in bwe_stats]
+            bwe_values = [s['bwe'] / 1e6 for s in bwe_stats]  # Mbps
+            time_series['bwe_time'] = bwe_times
+            time_series['bwe_mbps'] = bwe_values
+        else:
+            time_series['bwe_time'] = []
+            time_series['bwe_mbps'] = []
         
         # 计算丢包率时间序列（百分比）
         time_series['packet_loss_rate'] = [
@@ -302,7 +317,7 @@ def smooth_data(data, window_size=5):
 
 def plot_multi_metrics(data_dict, output_path, smooth=False, smooth_window=5):
     """
-    绘制多指标对比图（2x3子图）
+    绘制多指标对比图（3x3子图）
     
     参数:
     - data_dict: {算法名: (time_series, aggregated)}
@@ -310,17 +325,20 @@ def plot_multi_metrics(data_dict, output_path, smooth=False, smooth_window=5):
     - smooth: 是否平滑
     - smooth_window: 平滑窗口
     """
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig, axes = plt.subplots(3, 3, figsize=(18, 15))
     fig.suptitle('Video Quality Multi-Metric Comparison', fontsize=20, fontweight='bold', y=0.995)
     
     # 定义要绘制的指标
     metrics_config = [
         ('total_bps', 'Video Bitrate', 'Bitrate (Mbps)'),
+        ('bwe_mbps', 'Send Back BWE', 'BWE (Mbps)'),
         ('render_fps', 'Render Frame Rate', 'Render FPS'),
         ('e2e_delay_ms', 'End-to-End Delay', 'E2E Delay (ms)'),
         ('network_delay_ms', 'Network Delay', 'Network Delay (ms)'),
+        ('jb_delay_ms', 'Jitter Buffer Delay', 'JB Delay (ms)'),
         ('freeze_cnt', 'Freeze Count', 'Freeze Count'),
         ('packet_loss_rate', 'Packet Loss Rate', 'Packet Loss Rate (%)'),
+        ('nack', 'NACK Count', 'NACK Count'),
     ]
     
     for idx, (metric_key, title_cn, ylabel) in enumerate(metrics_config):
@@ -329,11 +347,23 @@ def plot_multi_metrics(data_dict, output_path, smooth=False, smooth_window=5):
         ax = axes[row, col]
         
         for algo_name, (time_series, _) in data_dict.items():
-            time = time_series['time']
-            data = time_series[metric_key]
+            # 特殊处理 BWE，因为它有自己的时间轴
+            if metric_key == 'bwe_mbps':
+                time = time_series.get('bwe_time', [])
+                data = time_series.get('bwe_mbps', [])
+            else:
+                time = time_series['time']
+                data = time_series.get(metric_key, [])
             
-            if smooth and len(data) > 0:
-                data = smooth_data(data, smooth_window)
+            if len(data) == 0:
+                continue
+                
+            if smooth and len(data) > smooth_window:
+                # 确保数据长度足够进行平滑
+                try:
+                    data = smooth_data(data, smooth_window)
+                except:
+                    pass
             
             ax.plot(time, data, label=algo_name, linewidth=2, alpha=0.8)
         
@@ -783,7 +813,7 @@ def main():
                 continue
             
             # 计算指标（丢包率从视频层的 cum_loss 和 packets_received 计算）
-            time_series, aggregated = VideoMetrics.calculate_metrics(parser.video_stats)
+            time_series, aggregated = VideoMetrics.calculate_metrics(parser.video_stats, parser.bwe_stats)
             data_dict[algo_name] = (time_series, aggregated)
             
             print(f"  平均比特率: {aggregated['avg_bitrate']:.3f} Mbps")

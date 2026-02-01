@@ -24,7 +24,7 @@ class Estimator(object):
     """在线强化学习带宽估计器（基于 PPO）"""
     
     def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/RL/trial3.pt", 
-                 step_time=200, use_rl=False, update_frequency=4):
+                 step_time=200, use_rl=True, update_frequency=4):
         """
         初始化估计器
         Args:
@@ -204,7 +204,7 @@ class Estimator(object):
         Returns:
             reward: 奖励值（越高越好）
         """
-        VIDEO_PAYLOAD_TYPE = 98
+        VIDEO_PAYLOAD_TYPE = 125
         
         # 获取网络指标（200ms 更新一次）
         delay = self.packet_record.calculate_average_delay(
@@ -235,23 +235,23 @@ class Estimator(object):
         # QoE 指标奖励（权重：0.5）
         # 注意：QoE 数据可能不是最新的（1 秒更新一次），但这是正常的
         # 1. render_fps: 越高越好，目标 30 FPS
-        fps_reward = min(self.render_fps / 30.0, 1.0) * 0.2
+        fps_reward = min(self.render_fps / 30.0, 1.0) * 0.15
         
         # 2. freeze_rate: 越低越好，惩罚卡顿
-        freeze_penalty = max(0, 1.0 - self.freeze_rate / 10.0) * 0.15  # 10% 卡顿率时惩罚为0
-        
+        #freeze_penalty = max(0, 1.0 - self.freeze_rate / 10.0) * 0.15  # 10% 卡顿率时惩罚为0
+        freeze_penalty = (1.0 - self.freeze_rate / 10.0) * 0.05
         # 3. e2e_delay: 越低越好，目标 < 200ms
-        e2e_delay_reward = max(0, 1.0 - self.e2e_delay_ms / 500.0) * 0.15  # 500ms 时奖励为0
-        
+        #e2e_delay_reward = max(0, 1.0 - self.e2e_delay_ms / 500.0) * 0.15  # 500ms 时奖励为0
+        e2e_delay_reward = ( 1.0 - self.e2e_delay_ms / 500.0) * 0.3
         # 网络指标奖励（权重：0.5）
         # 4. network_delay: 越低越好，目标 < 100ms
-        network_delay_reward = max(0, 1.0 - delay / 300.0) * 0.15  # 300ms 时奖励为0
-        
+        #network_delay_reward = max(0, 1.0 - delay / 300.0) * 0.15  # 300ms 时奖励为0
+        network_delay_reward = (1.0 - delay / 200.0) * 0.3 
         # 5. loss_ratio: 越低越好，惩罚丢包
         loss_penalty = max(0, 1.0 - loss_ratio / 0.05) * 0.15  # 5% 丢包率时惩罚为0
         
         # 6. throughput: 越高越好，奖励高吞吐量（归一化到 10Mbps）
-        throughput_reward = min(throughput_effective / 10e6, 1.0) * 0.2  # 10Mbps 时奖励为1
+        throughput_reward = min(throughput_effective / 10e6, 1.0) * 0.05  # 10Mbps 时奖励为1
         
         # 总奖励
         reward = (fps_reward + freeze_penalty + e2e_delay_reward + 
@@ -265,7 +265,7 @@ class Estimator(object):
         Returns:
             features: [32] 特征向量
         """
-        VIDEO_PAYLOAD_TYPE = 98
+        VIDEO_PAYLOAD_TYPE = 125
         
         # 1. 计算基础网络指标
         delay = self.packet_record.calculate_average_delay(
@@ -419,7 +419,7 @@ class Estimator(object):
             self.bandwidth_prediction = int(base_bandwidth)
         
         # 4. 更新历史状态
-        VIDEO_PAYLOAD_TYPE = 98
+        VIDEO_PAYLOAD_TYPE = 125
         delay = self.packet_record.calculate_average_delay(
             interval=self.step_time, 
             filter_payload_type=VIDEO_PAYLOAD_TYPE
