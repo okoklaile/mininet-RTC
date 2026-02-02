@@ -136,6 +136,62 @@ class GCCBC_LSTM(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
+class Critic(nn.Module):
+    """
+    Simple Value Network (Critic) for PPO
+    Estimates the state value V(s)
+    """
+    def __init__(self, config: Config):
+        super(Critic, self).__init__()
+        
+        # Use the same input dimension as Actor
+        self.input_dim = config.TOTAL_FEATURE_DIM
+        self.hidden_size = 64  # Simple FC network
+        
+        # We process the flattened sequence or just the last step?
+        # For simplicity, we use LSTM to extract features like Actor
+        # Or just a simple MLP on the last step features if we assume Markov property on recent history
+        # Here we reuse an LSTM structure similar to Actor but smaller to capture temporal dependencies
+        self.lstm = nn.LSTM(
+            input_size=self.input_dim,
+            hidden_size=self.hidden_size,
+            num_layers=1,
+            batch_first=True
+        )
+        
+        self.fc = nn.Sequential(
+            nn.Linear(self.hidden_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)  # Output scalar Value
+        )
+        
+        self._init_weights()
+        
+    def _init_weights(self):
+        for name, param in self.named_parameters():
+            if 'weight' in name:
+                if 'lstm' in name:
+                    nn.init.orthogonal_(param)
+                else:
+                    nn.init.xavier_uniform_(param)
+            elif 'bias' in name:
+                nn.init.constant_(param, 0.0)
+
+    def forward(self, x):
+        """
+        Args:
+            x: [batch, seq_len, feature_dim]
+        Returns:
+            value: [batch, 1]
+        """
+        self.lstm.flatten_parameters()
+        lstm_out, _ = self.lstm(x)
+        last_output = lstm_out[:, -1, :]  # [batch, hidden]
+        value = self.fc(last_output)
+        return value
+
+
+
 class WeightedMSELoss(nn.Module):
     """MSE Loss with sample weighting"""
     

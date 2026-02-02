@@ -24,7 +24,7 @@ class Estimator(object):
     """在线强化学习带宽估计器（基于 PPO）"""
     
     def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/RL/trial3.pt", 
-                 step_time=200, use_rl=True, update_frequency=4):
+                 step_time=200, use_rl=False, update_frequency=4):
         """
         初始化估计器
         Args:

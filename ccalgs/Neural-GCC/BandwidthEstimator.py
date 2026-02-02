@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from packet_info import PacketInfo
 from packet_record import PacketRecord
-from model import GCCBC_LSTM
+from model import GCCBC_LSTM, Critic
 from config import Config
 from deep_rl.ppo_agent import PPO
 
@@ -62,7 +62,7 @@ class Estimator(object):
     """Neural-GCC 带宽估计器 (BC-GCC + PPO)"""
     
     def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/Neural-GCC/trial3.pt", 
-                 step_time=200, use_rl=True, update_frequency=4, use_slow_start=True):
+                 step_time=200, use_rl=True, update_frequency=32, use_slow_start=False):
         """
         初始化估计器
         Args:
@@ -83,7 +83,16 @@ class Estimator(object):
             self.base_model.load_state_dict(checkpoint['model_state_dict'])
             self.base_model.to(self.device)
             self.base_model.eval()
-            # 冻结 Base Model 参数
+            
+            # 保存一个冻结的参考模型 (Reference Model)，用于计算 KL 散度，防止微调过度
+            self.ref_model = GCCBC_LSTM(self.config)
+            self.ref_model.load_state_dict(checkpoint['model_state_dict'])
+            self.ref_model.to(self.device)
+            self.ref_model.eval()
+            for param in self.ref_model.parameters():
+                param.requires_grad = False
+                
+            # 初始默认冻结 Base Model 参数
             for param in self.base_model.parameters():
                 param.requires_grad = False
             logger.info(f"✅ Base Model 加载成功 (Epoch {checkpoint['epoch']})")
@@ -101,8 +110,15 @@ class Estimator(object):
             for param in self.base_model.parameters():
                 param.requires_grad = True
                 
-            # 定义 Optimizer (针对 base_model)
-            self.optimizer = torch.optim.Adam(self.base_model.parameters(), lr=1e-5) # 使用较小的学习率进行微调
+            # 初始化 Critic
+            self.critic = Critic(self.config).to(self.device)
+            
+            # 定义 Optimizer (针对 base_model 和 critic)
+            # 将 Actor 和 Critic 的参数一起优化
+            self.optimizer = torch.optim.Adam([
+                {'params': self.base_model.parameters(), 'lr': 5e-6},
+                {'params': self.critic.parameters(), 'lr': 1e-4}  # Critic 通常可以用大一点的学习率
+            ])
             
             # PPO 超参数
             self.ppo_clip = 0.2
@@ -353,7 +369,8 @@ class Estimator(object):
             
             # 使用一个固定或可学习的 log_std
             if not hasattr(self, 'log_std'):
-                self.log_std = torch.zeros(1, 1).to(self.device) # 初始 sigma = 1.0
+                # 初始噪声设为 0.1 (log(0.1) ≈ -2.3)，减少绿线的剧烈震荡
+                self.log_std = torch.full((1, 1), -2.3).to(self.device)
             
             std = torch.exp(self.log_std)
             dist = torch.distributions.Normal(mu, std)
@@ -440,34 +457,57 @@ class Estimator(object):
         
         # 整理数据
         states = torch.FloatTensor([x[0] for x in self.storage]).to(self.device)
-        # actions = torch.stack([x[1] for x in self.storage]).squeeze()
         actions = torch.cat([x[1] for x in self.storage]).view(-1, 1)
         rewards = torch.FloatTensor([x[2] for x in self.storage]).to(self.device).view(-1, 1)
-        # next_states = torch.FloatTensor([x[3] for x in self.storage]).to(self.device)
+        next_states = torch.FloatTensor([x[3] for x in self.storage]).to(self.device)
+        dones = torch.FloatTensor([x[4] for x in self.storage]).to(self.device).view(-1, 1)
         old_log_probs = torch.cat([x[5] for x in self.storage]).view(-1, 1)
         
         # Mask input for states (consistent with forward)
         states[:, :, 16:] = 0.0
+        next_states[:, :, 16:] = 0.0
         
-        # 计算优势函数 (Advantage) - 简化版：Advantage = Reward (假设 baseline=0)
-        # 更严谨的做法需要一个 Critic Network 来估计 Value Function
-        # 这里为了微调简单，我们可以直接用 Reward 作为 Advantage，或者用 Normalize 后的 Reward
-        advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+        # --- GAE (Generalized Advantage Estimation) 计算 ---
+        with torch.no_grad():
+            values = self.critic(states)
+            next_values = self.critic(next_states)
+            
+            deltas = rewards + self.gamma * next_values * (1 - dones) - values
+            
+            advantages = torch.zeros_like(rewards)
+            gae = 0
+            for t in reversed(range(len(rewards))):
+                gae = deltas[t] + self.gamma * 0.95 * gae * (1 - dones[t]) # lambda=0.95
+                advantages[t] = gae
+            
+            returns = advantages + values
+
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # PPO Epochs
         # 必须切换到 train 模式才能进行 backward
         self.base_model.train()
+        self.critic.train()
         
         for _ in range(5):
             # 新的分布
             mu, _ = self.base_model.forward(states)
-            # mu = mu.squeeze(1) # [batch, 1]
             
             std = torch.exp(self.log_std)
             dist = torch.distributions.Normal(mu, std)
             
             new_log_probs = dist.log_prob(actions)
             entropy = dist.entropy().mean()
+            
+            # 计算参考模型的分布 (Reference Policy)
+            with torch.no_grad():
+                ref_mu, _ = self.ref_model.forward(states)
+                ref_dist = torch.distributions.Normal(ref_mu, std) # 使用相同的 std
+                ref_log_probs = ref_dist.log_prob(actions)
+            
+            # 计算解析 KL 散度 (Analytical KL Divergence)
+            kl_div = 0.5 * ((mu - ref_mu)**2 / (std**2)).mean()
             
             # Ratio
             ratio = torch.exp(new_log_probs - old_log_probs)
@@ -477,8 +517,12 @@ class Estimator(object):
             surr2 = torch.clamp(ratio, 1.0 - self.ppo_clip, 1.0 + self.ppo_clip) * advantages
             actor_loss = -torch.min(surr1, surr2).mean()
             
-            # Total Loss
-            loss = actor_loss - 0.01 * entropy
+            # Critic Loss (Value Loss)
+            new_values = self.critic(states)
+            critic_loss = 0.5 * ((new_values - returns) ** 2).mean()
+            
+            # Total Loss: 加入 KL 惩罚系数 (恢复为 0.5)
+            loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy + 0.5 * kl_div
             
             # Update
             self.optimizer.zero_grad()
@@ -487,6 +531,7 @@ class Estimator(object):
             
         # 更新完毕后切回 eval 模式，以免影响 inference 时的行为 (如 dropout, batchnorm)
         self.base_model.eval()
+        self.critic.eval()
         
         avg_reward = rewards.mean().item()
         logger.info(f"🔄 PPO Update: Loss={loss.item():.4f}, Avg Reward={avg_reward:.2f}")
@@ -501,6 +546,7 @@ class Estimator(object):
             try:
                 torch.save({
                     'model_state_dict': self.base_model.state_dict(),
+                    'critic_state_dict': self.critic.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'log_std': self.log_std,
                     'best_reward': self.best_reward
@@ -512,42 +558,45 @@ class Estimator(object):
 
     def _calculate_reward(self, receiving_rate, loss_ratio, delay, current_prediction, last_prediction):
         """
-        在线强化学习奖励函数
-        
-        参数:
-        receiving_rate: 当前步的接收速率 (bps)
-        loss_ratio: 当前丢包率 (0.0-1.0)
-        delay: 当前平均延迟 (ms)
-        current_prediction: 产生当前状态的预测值 (bps)
-        last_prediction: 上一步的预测值 (bps)，用于计算波动惩罚
+        参考简洁版奖励函数重构
+        核心思想：全局归一化 + 线性组合
         """
         
-        # 1. 吞吐量收益归一化 (使用 log 尺度)
-        min_bw = 80000.0  # 80kbps
-        max_bw = self.config.NORM_STATS['receiving_rate']['max'] # 10Mbps
+        # 1. 吞吐量 (Log-scale, 0~1)
+        # 参考逻辑：liner_to_log(receiving_rate)
+        min_bw = 80000.0
+        max_bw = self.config.NORM_STATS['receiving_rate']['max']
         
         def liner_to_log(val):
-            val_mbps = np.clip(val / 1000000.0, min_bw / 1000000.0, max_bw / 1000000.0)
+            val_mbps = np.clip(val / 1e6, min_bw / 1e6, max_bw / 1e6)
             log_val = np.log(val_mbps)
-            log_min, log_max = np.log(min_bw / 1000000.0), np.log(max_bw / 1000000.0)
+            log_min, log_max = np.log(min_bw / 1e6), np.log(max_bw / 1e6)
             return (log_val - log_min) / (log_max - log_min)
 
         r_tp = liner_to_log(receiving_rate)
         
-        # 2. 延迟惩罚 (归一化)
-        max_delay = self.config.NORM_STATS['delay']['max']
-        p_delay = min(delay / max_delay, 1.0)
+        # 2. 延迟 (Linear, 0~1)
+        # 参考逻辑：min(delay / 1000, 1)
+        # 这里我们稍微调整分母，适应实时通信需求
+        # 如果用 1000ms 作为分母，对于 200ms 的延迟，值为 0.2
+        # 如果用 400ms 作为分母，对于 200ms 的延迟，值为 0.5
+        # 考虑到您希望延迟 < GCC (约 100-200ms)，我们设定分母为 400ms
+        p_delay = min(delay / 400.0, 1.0)
         
-        # 3. 丢包惩罚
+        # 3. 丢包 (Linear, 0~1)
+        # 参考逻辑：直接使用 loss_ratio
         p_loss = loss_ratio
         
-        # 4. 稳定性惩罚 (码率波动)
+        # 4. 稳定性 (Log-scale, 0~1)
+        # 参考逻辑：liner_to_log(delta_prediction)
         delta_prediction = abs(current_prediction - last_prediction)
         p_stability = liner_to_log(delta_prediction)
         
         # --- 最终奖励组合 ---
-        # reward = throughput - 1.5 * delay_penalty - 1.5 * loss_penalty - 0.02 * stability_penalty
-        reward = r_tp - 1.5 * p_delay - 1.5 * p_loss - 0.02 * p_stability
+        # 参考权重：reward = r_tp - 1.5 * p_delay - 1.5 * p_loss - 0.02 * p_stability
+        # 我们保持这个比例，但稍微调整系数以适应我们的归一化尺度
+        
+        reward = r_tp - 2.0 * p_delay - 2.0 * p_loss - 0.1 * p_stability
         
         return round(float(reward), 4)
 
@@ -564,6 +613,7 @@ class Estimator(object):
                 # Save both model state dict and optimizer state
                 torch.save({
                     'model_state_dict': self.base_model.state_dict(),
+                    'critic_state_dict': self.critic.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'log_std': self.log_std,
                     'update_count': self.update_count
@@ -583,6 +633,10 @@ class Estimator(object):
             
             checkpoint = torch.load(cp_path, map_location=self.device)
             self.base_model.load_state_dict(checkpoint['model_state_dict'])
+            
+            if 'critic_state_dict' in checkpoint and hasattr(self, 'critic'):
+                self.critic.load_state_dict(checkpoint['critic_state_dict'])
+                
             if 'optimizer_state_dict' in checkpoint and hasattr(self, 'optimizer'):
                 self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             if 'log_std' in checkpoint:

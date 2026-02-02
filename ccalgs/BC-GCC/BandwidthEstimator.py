@@ -53,7 +53,7 @@ class PacketGroup:
 class Estimator(object):
     """BC-GCC 带宽估计器"""
     
-    def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/BC-GCC/trial3.pt", step_time=200, use_slow_start=True):
+    def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/BC-GCC/trial3.pt", step_time=200, use_slow_start=False):
         """
         初始化估计器
         """
