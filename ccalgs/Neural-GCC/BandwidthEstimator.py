@@ -61,17 +61,24 @@ class PacketGroup:
 class Estimator(object):
     """Neural-GCC 带宽估计器 (BC-GCC + PPO)"""
     
-    def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/Neural-GCC/trial3.pt", 
-                 step_time=200, use_rl=True, update_frequency=32, use_slow_start=False):
+    def __init__(self, model_path="/home/wyq/桌面/mininet-RTC/ccalgs/BC-GCC/trial3.pt", 
+                 step_time=200, 
+                 use_slow_start=False,
+                 use_rl=True,
+                 update_frequency=32,
+                 inference_only=True):
         """
         初始化估计器
         Args:
-            model_path: PyTorch模型路径 (Base Model)
-            step_time: 时间步长(毫秒)，默认200ms
-            use_rl: 是否启用强化学习 (PPO)
-            update_frequency: PPO 更新频率 (多少个step更新一次)
-            use_slow_start: 是否启用GCC慢启动
+            inference_only (bool): 如果为True，只加载最佳模型进行推理，不进行训练
         """
+        self.inference_only = inference_only
+        
+        # ... Logging init ...
+        logging.basicConfig(level=logging.INFO)
+        global logger
+        logger = logging.getLogger("NeuralGCC")
+
         # 1. 加载 Base Model (BC-GCC)
         self.config = Config32D()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -131,7 +138,25 @@ class Estimator(object):
             self.save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
             if not os.path.exists(self.save_dir):
                 os.makedirs(self.save_dir)
+            
+            if self.inference_only:
+                # 推理模式：尝试加载 best_checkpoint.pth
+                best_path = os.path.join(self.save_dir, "best_checkpoint.pth")
+                if os.path.exists(best_path):
+                    logger.info(f"🚀 Loading BEST model for Inference: {best_path}")
+                    checkpoint = torch.load(best_path, map_location=self.device)
+                    self.base_model.load_state_dict(checkpoint['model_state_dict'])
+                    self.base_model.eval()
+                    # 确保参数冻结
+                    for param in self.base_model.parameters():
+                        param.requires_grad = False
+                    # 关闭 RL 训练标志，防止触发 update
+                    self.use_rl = False 
+                else:
+                    logger.warning("⚠️ No best_checkpoint.pth found! Falling back to Base Model.")
+                    self.use_rl = False # 依然关闭训练
             else:
+                # 训练模式：加载最新的 checkpoint
                 self._load_latest_checkpoint()
 
         # 3. 初始化状态和历史
@@ -336,8 +361,8 @@ class Estimator(object):
         else:
             state_seq = np.array(current_features, dtype=np.float32)
 
-        # 2. PPO Fine-tuning 逻辑
-        if self.use_rl:
+        # 2. PPO Fine-tuning 逻辑 (仅当 use_rl=True 且不是 inference_only 时)
+        if self.use_rl and not self.inference_only:
             # 计算上一步的奖励并存储经验
             if self.last_state is not None:
                 reward = self._calculate_reward(throughput_effective, loss_ratio, delay, 
@@ -363,14 +388,14 @@ class Estimator(object):
         input_tensor = torch.from_numpy(input_seq).unsqueeze(0).to(self.device) # [1, 10, 32]
         
         # 采样动作 (Sampling for exploration)
-        if self.use_rl:
+        if self.use_rl and not self.inference_only:
             # 在训练模式下，我们需要从分布中采样，而不是直接取均值
             mu, _ = self.base_model.forward(input_tensor) # [1, 1]
             
             # 使用一个固定或可学习的 log_std
             if not hasattr(self, 'log_std'):
-                # 初始噪声设为 0.1 (log(0.1) ≈ -2.3)，减少绿线的剧烈震荡
-                self.log_std = torch.full((1, 1), -2.3).to(self.device)
+                # 降低初始噪声 (std ≈ 0.05)，减少盲目探索
+                self.log_std = torch.full((1, 1), -3.0).to(self.device)
             
             std = torch.exp(self.log_std)
             dist = torch.distributions.Normal(mu, std)
@@ -386,7 +411,7 @@ class Estimator(object):
             self.last_log_prob = log_prob.detach()
             
         else:
-            # 推理模式，直接取确定性输出
+            # 推理模式，直接取确定性输出 (包括 inference_only 模式)
             with torch.no_grad():
                 output, _ = self.base_model.predict(input_tensor)
                 bw_norm = output.cpu().item()
@@ -521,8 +546,9 @@ class Estimator(object):
             new_values = self.critic(states)
             critic_loss = 0.5 * ((new_values - returns) ** 2).mean()
             
-            # Total Loss: 加入 KL 惩罚系数 (恢复为 0.5)
-            loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy + 0.5 * kl_div
+            # Total Loss: 大幅提升 KL 惩罚系数，强制模型贴合 BC-GCC
+            # 既然 BC-GCC 效果已经很好，我们只需要 PPO 做极微小的修正
+            loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy + 5.0 * kl_div
             
             # Update
             self.optimizer.zero_grad()
@@ -576,12 +602,15 @@ class Estimator(object):
         r_tp = liner_to_log(receiving_rate)
         
         # 2. 延迟 (Linear, 0~1)
-        # 参考逻辑：min(delay / 1000, 1)
-        # 这里我们稍微调整分母，适应实时通信需求
-        # 如果用 1000ms 作为分母，对于 200ms 的延迟，值为 0.2
-        # 如果用 400ms 作为分母，对于 200ms 的延迟，值为 0.5
-        # 考虑到您希望延迟 < GCC (约 100-200ms)，我们设定分母为 400ms
-        p_delay = min(delay / 400.0, 1.0)
+        # 目标：让延迟接近最小延迟 -> 重点惩罚排队延迟 (Queue Delay)
+        # queue_delay = current_delay - min_delay_seen
+        min_delay = self.min_delay_seen if self.min_delay_seen != float('inf') else 0
+        queue_delay = max(0, delay - min_delay)
+        
+        # 归一化：我们设置一个 100ms 的排队容忍上限。
+        # 意味着如果排队延迟超过 100ms，惩罚项 p_delay 就会达到最大值 1.0
+        # 这样会强迫模型将排队延迟控制在 0~100ms 之间，尽可能接近 0
+        p_delay = min(queue_delay / 50.0, 1.0)
         
         # 3. 丢包 (Linear, 0~1)
         # 参考逻辑：直接使用 loss_ratio
@@ -595,8 +624,9 @@ class Estimator(object):
         # --- 最终奖励组合 ---
         # 参考权重：reward = r_tp - 1.5 * p_delay - 1.5 * p_loss - 0.02 * p_stability
         # 我们保持这个比例，但稍微调整系数以适应我们的归一化尺度
+        # 再次强化延迟惩罚，确保模型不敢越雷池一步
         
-        reward = r_tp - 2.0 * p_delay - 2.0 * p_loss - 0.1 * p_stability
+        reward = r_tp - 5.0 * p_delay - 5.0 * p_loss - 0.1 * p_stability
         
         return round(float(reward), 4)
 

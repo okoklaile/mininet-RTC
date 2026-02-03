@@ -42,12 +42,12 @@ ALGORITHMS = [
     'GCC', 
     #'BBR', 
     #'dummy',
-    #'FARC', 
+    'FARC', 
     #'Gemini', 
-    #'HRCC', 
-    #'Schaferct',
+    'HRCC', 
+    'Schaferct',
     #'Copa',
-    #'Copa+',
+    'Copa+',
     #'Cubic',
     #'PCC',
     'BC-GCC',
@@ -60,7 +60,7 @@ PORT = 8000
 DEFAULT_BANDWIDTH = '5Mbps'
 DEFAULT_DELAY = '30ms'
 DEFAULT_LOSS = 0
-QUEUE_SIZE = 50
+QUEUE_SIZE = 10
 
 # 测试时长（秒）- 如果使用trace，会根据trace总时长自动调整
 TEST_DURATION = 60*10
