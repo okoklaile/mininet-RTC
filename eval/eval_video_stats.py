@@ -170,13 +170,29 @@ class VideoMetrics:
     """计算视频质量指标"""
     
     @staticmethod
-    def calculate_metrics(video_stats, bwe_stats=None):
+    def remove_outliers(data, multiplier=3):
+        """
+        使用 IQR (Interquartile Range) 方法剔除极端异常值
+        multiplier=3.0 表示剔除极度异常值（通常 1.5 是温和异常，3.0 是极端异常）
+        """
+        if len(data) < 4:
+            return data
+        q1 = np.percentile(data, 25)
+        q3 = np.percentile(data, 75)
+        iqr = q3 - q1
+        lower_bound = q1 - multiplier * iqr
+        upper_bound = q3 + multiplier * iqr
+        return [x for x in data if lower_bound <= x <= upper_bound]
+
+    @staticmethod
+    def calculate_metrics(video_stats, bwe_stats=None, warmup=0):
         """
         计算各种视频质量指标
         
         参数:
         - video_stats: 视频统计数据列表
         - bwe_stats: BWE 统计数据列表
+        - warmup: 预热时间（秒），剔除前 X 秒的数据
         
         返回:
         - 时间序列数据字典
@@ -185,10 +201,28 @@ class VideoMetrics:
         if not video_stats:
             return {}, {}
         
-        # 时间序列数据
+        # 确定基准时间
+        all_timestamps = [s['timestamp'] for s in video_stats]
+        if bwe_stats:
+            all_timestamps.extend([s['timestamp'] for s in bwe_stats])
+        base_time = min(all_timestamps)
+        
+        # 剔除预热期数据
+        if warmup > 0:
+            video_stats = [s for s in video_stats if (s['timestamp'] - base_time) / 1000.0 >= warmup]
+            if bwe_stats:
+                bwe_stats = [s for s in bwe_stats if (s['timestamp'] - base_time) / 1000.0 >= warmup]
+        
+        if not video_stats:
+            print(f"  ⚠️ 剔除 {warmup}s 预热期后没有剩余视频数据")
+            return {}, {}
+
+        # 重新计算剔除后的时间序列数据
         timestamps = [s['timestamp'] for s in video_stats]
-        base_time = timestamps[0]
-        rel_times = [(t - base_time) / 1000.0 for t in timestamps]  # 转换为秒
+        # 保持 rel_times 相对于原始基准时间，或者相对于第一个有效点？
+        # 通常相对于第一个有效点更好看图
+        new_base_time = timestamps[0]
+        rel_times = [(t - new_base_time) / 1000.0 for t in timestamps] 
         
         time_series = {
             'time': rel_times,
@@ -213,7 +247,7 @@ class VideoMetrics:
         
         # 处理 BWE 数据
         if bwe_stats:
-            bwe_times = [(s['timestamp'] - base_time) / 1000.0 for s in bwe_stats]
+            bwe_times = [(s['timestamp'] - new_base_time) / 1000.0 for s in bwe_stats]
             bwe_values = [s['bwe'] / 1e6 for s in bwe_stats]  # Mbps
             time_series['bwe_time'] = bwe_times
             time_series['bwe_mbps'] = bwe_values
@@ -244,6 +278,14 @@ class VideoMetrics:
         # 计算端到端延迟和网络延迟（过滤掉 0 和负值）
         valid_e2e_delays = [d for d in time_series['e2e_delay_ms'] if d > 0]
         valid_network_delays = [d for d in time_series['network_delay_ms'] if d > 0]
+        valid_cur_delays = [d for d in time_series['cur_delay_ms'] if d > 0]
+        valid_jb_delays = [d for d in time_series['jb_delay_ms'] if d > 0]
+        
+        # 剔除极端异常点 (使用 3.0 IQR 阈值)
+        clean_e2e = VideoMetrics.remove_outliers(valid_e2e_delays, multiplier=3.0)
+        clean_network = VideoMetrics.remove_outliers(valid_network_delays, multiplier=3.0)
+        clean_cur = VideoMetrics.remove_outliers(valid_cur_delays, multiplier=3.0)
+        clean_jb = VideoMetrics.remove_outliers(valid_jb_delays, multiplier=3.0)
         
         # 计算分辨率相关指标
         widths = time_series['width']
@@ -260,14 +302,42 @@ class VideoMetrics:
         # 计算平均像素数（用于QoE评分）
         avg_pixels = avg_width * avg_height if avg_width > 0 and avg_height > 0 else 0
         
+        # --- 计算自定义 QoE 指标 (根据用户提供的公式) ---
+        avg_bitrate_mbps = np.mean(time_series['total_bps'])
+        # 假设最大带宽为 5.0 Mbps (multi_cc_test.py 中的默认值)
+        U = min(1.0, avg_bitrate_mbps / 5.0) 
+        qoe_recv_rate = 100 * U
+        
+        if clean_cur:
+            d_max = np.max(clean_cur)
+            d_min = np.min(clean_cur)
+            d_95th = np.percentile(clean_cur, 95)
+            if d_max > d_min:
+                qoe_delay = 100 * (d_max - d_95th) / (d_max - d_min)
+            else:
+                qoe_delay = 100.0
+        else:
+            qoe_delay = 0.0
+            
+        L = video_packet_loss_rate / 100.0
+        qoe_loss = 100 * (1 - L)
+        
+        # QoE = 0.2 * QoE_recv_rate + 0.2 * QoE_delay + 0.3 * QoE_loss
+        qoe_total = 0.2 * qoe_recv_rate + 0.2 * qoe_delay + 0.3 * qoe_loss
+        # ----------------------------------------------
+
         aggregated = {
-            'avg_bitrate': np.mean(time_series['total_bps']),
+            'avg_bitrate': avg_bitrate_mbps,
             'avg_render_fps': np.mean(time_series['render_fps']),
             'avg_network_fps': np.mean(time_series['network_fps']),
-            'avg_delay': np.mean(time_series['cur_delay_ms']),
-            'avg_jb_delay': np.mean(time_series['jb_delay_ms']),
-            'avg_e2e_delay': np.mean(valid_e2e_delays) if valid_e2e_delays else -1,
-            'avg_network_delay': np.mean(valid_network_delays) if valid_network_delays else -1,
+            'avg_delay': np.mean(clean_cur) if clean_cur else 0,
+            'p95_delay': np.percentile(clean_cur, 95) if clean_cur else 0,
+            'avg_jb_delay': np.mean(clean_jb) if clean_jb else 0,
+            'p95_jb_delay': np.percentile(clean_jb, 95) if clean_jb else 0,
+            'avg_e2e_delay': np.mean(clean_e2e) if clean_e2e else -1,
+            'p95_e2e_delay': np.percentile(clean_e2e, 95) if clean_e2e else -1,
+            'avg_network_delay': np.mean(clean_network) if clean_network else -1,
+            'p95_network_delay': np.percentile(clean_network, 95) if clean_network else -1,
             'total_freeze_count': time_series['freeze_cnt'][-1] if time_series['freeze_cnt'] else 0,
             'total_freeze_duration': total_freeze_duration_ms,
             'freeze_rate': freeze_rate,
@@ -283,6 +353,11 @@ class VideoMetrics:
             'avg_pixels': avg_pixels,
             'resolution_changes': resolution_changes,
             'total_duration': total_duration_s,
+            # 自定义 QoE 指标
+            'qoe_recv_rate': qoe_recv_rate,
+            'qoe_delay': qoe_delay,
+            'qoe_loss': qoe_loss,
+            'qoe_total': qoe_total,
         }
         
         return time_series, aggregated
@@ -476,13 +551,13 @@ def plot_qoe_metrics(data_dict, output_path):
     packet_loss_rates = [data_dict[a][1]['packet_loss_rate'] for a in algos]  # 丢包率
     avg_render_fps = [data_dict[a][1]['avg_render_fps'] for a in algos]  # 平均渲染帧率
     avg_bitrates = [data_dict[a][1]['avg_bitrate'] for a in algos]  # 平均比特率
-    avg_e2e_delays = [data_dict[a][1]['avg_e2e_delay'] if data_dict[a][1]['avg_e2e_delay'] > 0 else 0 for a in algos]  # 端到端延迟
-    avg_network_delays = [data_dict[a][1]['avg_network_delay'] if data_dict[a][1]['avg_network_delay'] > 0 else 0 for a in algos]  # 网络延迟
+    p95_e2e_delays = [data_dict[a][1]['p95_e2e_delay'] if data_dict[a][1]['p95_e2e_delay'] > 0 else 0 for a in algos]  # P95端到端延迟
+    p95_network_delays = [data_dict[a][1]['p95_network_delay'] if data_dict[a][1]['p95_network_delay'] > 0 else 0 for a in algos]  # P95网络延迟
     avg_pixels = [data_dict[a][1]['avg_pixels'] / 1e6 for a in algos]  # 平均像素数（百万）
     resolution_changes = [data_dict[a][1]['resolution_changes'] for a in algos]  # 分辨率变化次数
     
     fig, axes = plt.subplots(3, 3, figsize=(18, 12))
-    fig.suptitle('Quality of Experience (QoE) Metrics Comparison', fontsize=20, fontweight='bold')
+    fig.suptitle('Quality of Experience (QoE) Metrics Comparison (Delay: P95)', fontsize=20, fontweight='bold')
     
     # 第一行：卡顿相关指标
     # 1. 卡顿次数
@@ -523,16 +598,16 @@ def plot_qoe_metrics(data_dict, output_path):
     axes[1, 2].grid(axis='y', alpha=0.3)
     
     # 第三行：两个延迟指标
-    # 7. 平均端到端延迟
-    axes[2, 0].bar(algos, avg_e2e_delays, color='lavender', alpha=0.8, edgecolor='purple')
-    axes[2, 0].set_ylabel('E2E Delay (ms)', fontsize=12)
-    axes[2, 0].set_title('Average End-to-End Delay', fontsize=14, fontweight='bold')
+    # 7. P95端到端延迟
+    axes[2, 0].bar(algos, p95_e2e_delays, color='lavender', alpha=0.8, edgecolor='purple')
+    axes[2, 0].set_ylabel('E2E Delay P95 (ms)', fontsize=12)
+    axes[2, 0].set_title('P95 End-to-End Delay', fontsize=14, fontweight='bold')
     axes[2, 0].grid(axis='y', alpha=0.3)
     
-    # 8. 平均网络延迟
-    axes[2, 1].bar(algos, avg_network_delays, color='peachpuff', alpha=0.8, edgecolor='darkorange')
-    axes[2, 1].set_ylabel('Network Delay (ms)', fontsize=12)
-    axes[2, 1].set_title('Average Network Delay', fontsize=14, fontweight='bold')
+    # 8. P95网络延迟
+    axes[2, 1].bar(algos, p95_network_delays, color='peachpuff', alpha=0.8, edgecolor='darkorange')
+    axes[2, 1].set_ylabel('Network Delay P95 (ms)', fontsize=12)
+    axes[2, 1].set_title('P95 Network Delay', fontsize=14, fontweight='bold')
     axes[2, 1].grid(axis='y', alpha=0.3)
     
     # 9. 平均分辨率（百万像素）
@@ -560,15 +635,69 @@ def plot_qoe_metrics(data_dict, output_path):
     plt.close()
 
 
+def plot_custom_qoe(data_dict, output_path):
+    """
+    根据用户提供的公式绘制自定义 QoE 指标对比图
+    
+    公式:
+    - QoE_recv = 100 * U (U = bitrate / capacity)
+    - QoE_delay = 100 * (d_max - d_95th) / (d_max - d_min)
+    - QoE_loss = 100 * (1 - L)
+    - QoE_total = 0.2 * QoE_recv + 0.2 * QoE_delay + 0.3 * QoE_loss
+    """
+    algos = list(data_dict.keys())
+    
+    qoe_recv = [data_dict[a][1]['qoe_recv_rate'] for a in algos]
+    qoe_delay = [data_dict[a][1]['qoe_delay'] for a in algos]
+    qoe_loss = [data_dict[a][1]['qoe_loss'] for a in algos]
+    qoe_total = [data_dict[a][1]['qoe_total'] for a in algos]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle('Custom QoE Metrics Comparison (Based on User Formulas)', fontsize=18, fontweight='bold')
+    
+    metrics = [
+        (qoe_recv, 'QoE Recv Rate (100 * U)', 'Score', 'skyblue'),
+        (qoe_delay, 'QoE Delay (100 * (d_max - d_95) / (d_max - d_min))', 'Score', 'lightgreen'),
+        (qoe_loss, 'QoE Loss (100 * (1 - L))', 'Score', 'salmon'),
+        (qoe_total, 'Total QoE (0.2*R + 0.2*D + 0.3*L)', 'Score', 'gold')
+    ]
+    
+    for idx, (data, title, ylabel, color) in enumerate(metrics):
+        row = idx // 2
+        col = idx % 2
+        ax = axes[row, col]
+        
+        bars = ax.bar(algos, data, color=color, alpha=0.8, edgecolor='black')
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.set_ylabel(ylabel)
+        ax.set_ylim(0, max(max(data) * 1.1, 100) if data else 110)
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        
+        # 添加数值标签
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 1,
+                    f'{height:.1f}', ha='center', va='bottom', fontsize=10)
+        
+        ax.tick_params(axis='x', rotation=30)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
+    print(f"✓ 自定义 QoE 对比图已保存: {output_path}")
+    plt.close()
+
+
 # ============================================
 # 统计报告
 # ============================================
 
-def generate_report(data_dict, output_path):
+def generate_report(data_dict, output_path, warmup=0):
     """生成视频质量统计报告"""
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write("=" * 100 + "\n")
         f.write("视频流质量统计报告 (VideoReceiveStream Stats Analysis)\n")
+        if warmup > 0:
+            f.write(f"注意: 已剔除前 {warmup}s 的预热期数据\n")
         f.write("=" * 100 + "\n\n")
         
         # 按平均比特率排序
@@ -596,21 +725,21 @@ def generate_report(data_dict, output_path):
             f.write("\n")
             
             # 延迟指标
-            f.write("  【延迟指标】\n")
-            f.write(f"    平均处理延迟:          {aggregated['avg_delay']:.2f} ms (Jitter Buffer + 解码 + 渲染)\n")
-            f.write(f"    平均抖动缓冲延迟:      {aggregated['avg_jb_delay']:.2f} ms\n")
+            f.write("  【延迟指标 (Average & P95)】\n")
+            f.write(f"    处理延迟:              Avg: {aggregated['avg_delay']:.2f} ms / P95: {aggregated['p95_delay']:.2f} ms\n")
+            f.write(f"    抖动缓冲延迟:          Avg: {aggregated['avg_jb_delay']:.2f} ms / P95: {aggregated['p95_jb_delay']:.2f} ms\n")
             f.write(f"    平均解码耗时:          {aggregated['avg_decode_time']:.2f} ms\n")
             
             # 显示端到端延迟和网络延迟（如果有效）
-            if aggregated['avg_e2e_delay'] > 0:
-                f.write(f"    平均端到端延迟:        {aggregated['avg_e2e_delay']:.2f} ms (发送端到接收端全程)\n")
+            if aggregated['p95_e2e_delay'] > 0:
+                f.write(f"    端到端延迟:            Avg: {aggregated['avg_e2e_delay']:.2f} ms / P95: {aggregated['p95_e2e_delay']:.2f} ms\n")
             else:
-                f.write(f"    平均端到端延迟:        N/A (无有效数据)\n")
+                f.write(f"    端到端延迟:            N/A (无有效数据)\n")
             
-            if aggregated['avg_network_delay'] > 0:
-                f.write(f"    平均网络延迟:          {aggregated['avg_network_delay']:.2f} ms (网络传输延迟)\n")
+            if aggregated['p95_network_delay'] > 0:
+                f.write(f"    网络延迟:              Avg: {aggregated['avg_network_delay']:.2f} ms / P95: {aggregated['p95_network_delay']:.2f} ms\n")
             else:
-                f.write(f"    平均网络延迟:          N/A (无有效数据)\n")
+                f.write(f"    网络延迟:              N/A (无有效数据)\n")
             f.write("\n")
             
             # 用户体验质量
@@ -629,6 +758,14 @@ def generate_report(data_dict, output_path):
             f.write(f"    NACK请求次数:          {aggregated['total_nack']}\n")
             f.write("\n")
             
+            # 自定义 QoE (根据用户公式)
+            f.write("  【自定义 QoE 指标 (根据用户提供的公式)】\n")
+            f.write(f"    QoE_recv_rate (100*U): {aggregated['qoe_recv_rate']:.2f}\n")
+            f.write(f"    QoE_delay (100*norm):  {aggregated['qoe_delay']:.2f}\n")
+            f.write(f"    QoE_loss (100*(1-L)):  {aggregated['qoe_loss']:.2f}\n")
+            f.write(f"    综合 QoE (0.2+0.2+0.3): {aggregated['qoe_total']:.2f}\n")
+            f.write("\n")
+            
             # QoE评分（简单评分系统）
             qoe_score = calculate_qoe_score(aggregated)
             f.write(f"  【综合QoE评分】:         {qoe_score:.1f} / 100\n")
@@ -638,10 +775,10 @@ def generate_report(data_dict, output_path):
         f.write("\n数据来源说明:\n")
         f.write("  - 所有指标均来自: video_receive_stream2.cc 视频层统计日志\n")
         f.write("\n延迟指标说明:\n")
-        f.write("  - 处理延迟 (cur_delay_ms): 接收端处理延迟 = Jitter Buffer + 解码 + 渲染延迟\n")
-        f.write("  - 端到端延迟 (e2e_delay_ms): 发送端到接收端的完整延迟（发送时间戳 -> 渲染时间）\n")
-        f.write("  - 网络延迟 (network_delay_ms): 网络传输延迟（发送端 -> 接收端网络传输时间）\n")
-        f.write("  - 注意: e2e_delay_ms = network_delay_ms + 接收端处理延迟\n")
+        f.write("  - P95处理延迟: 接收端处理延迟的 95 分位值 (已剔除 3.0*IQR 以外的极端异常点)\n")
+        f.write("  - P95端到端延迟: 发送端到接收端的 95 分位完整延迟 (已剔除极端异常点)\n")
+        f.write("  - P95网络延迟: 网络传输的 95 分位延迟 (已剔除极端异常点)\n")
+        f.write("  - 注意: 所有的延迟指标现在均采用 95 分位值（P95），并预先通过 IQR 方法过滤了因系统卡顿或初始连接产生的极少数尖峰数据。\n")
         f.write("\n丢包率计算:\n")
         f.write("  - 公式: cum_loss / (cum_loss + packets_received) × 100%\n")
         f.write("  - cum_loss: 累计丢失的包数（视频层统计）\n")
@@ -684,8 +821,8 @@ def calculate_qoe_score(aggregated):
     else:
         score += max(0, fps / 30 * 25)
     
-    # 2. 延迟评分 (满分20)
-    delay = aggregated['avg_delay']
+    # 2. 延迟评分 (满分20) - 基于 P95 延迟
+    delay = aggregated['p95_delay']
     if delay <= 50:
         score += 20
     elif delay <= 100:
@@ -776,6 +913,7 @@ def main():
     # ----------------
     parser.add_argument('--smooth', action='store_true', help='启用平滑处理')
     parser.add_argument('--window', type=int, default=5, help='平滑窗口大小')
+    parser.add_argument('--warmup', type=float, default=0, help='预热时间（秒），剔除开头的数据')
     args = parser.parse_args()
 
     # ... 省略中间的 print ...
@@ -813,17 +951,22 @@ def main():
                 continue
             
             # 计算指标（丢包率从视频层的 cum_loss 和 packets_received 计算）
-            time_series, aggregated = VideoMetrics.calculate_metrics(parser.video_stats, parser.bwe_stats)
+            time_series, aggregated = VideoMetrics.calculate_metrics(parser.video_stats, parser.bwe_stats, args.warmup)
+            
+            if not time_series:
+                continue
+                
             data_dict[algo_name] = (time_series, aggregated)
             
             print(f"  平均比特率: {aggregated['avg_bitrate']:.3f} Mbps")
             print(f"  平均帧率: {aggregated['avg_render_fps']:.1f} FPS")
             print(f"  平均分辨率: {aggregated['resolution']} (变化次数: {aggregated['resolution_changes']})")
-            print(f"  平均处理延迟: {aggregated['avg_delay']:.2f} ms")
+            print(f"  处理延迟: Avg: {aggregated['avg_delay']:.2f} ms / P95: {aggregated['p95_delay']:.2f} ms")
             
             # 显示端到端延迟和网络延迟
-            if aggregated['avg_e2e_delay'] > 0:
-                print(f"  平均端到端延迟: {aggregated['avg_e2e_delay']:.2f} ms, 平均网络延迟: {aggregated['avg_network_delay']:.2f} ms")
+            if aggregated['p95_e2e_delay'] > 0:
+                print(f"  端到端延迟: Avg: {aggregated['avg_e2e_delay']:.2f} ms / P95: {aggregated['p95_e2e_delay']:.2f} ms")
+                print(f"  网络延迟: Avg: {aggregated['avg_network_delay']:.2f} ms / P95: {aggregated['p95_network_delay']:.2f} ms")
             else:
                 print(f"  端到端延迟/网络延迟: 无有效数据")
             
@@ -862,9 +1005,13 @@ def main():
     qoe_path = os.path.join(RESULT_DIR, "video_qoe_metrics.pdf")
     plot_qoe_metrics(data_dict, qoe_path)
     
-    # 5. 生成报告
+    # 5. 自定义 QoE 对比图
+    custom_qoe_path = os.path.join(RESULT_DIR, "video_custom_qoe.pdf")
+    plot_custom_qoe(data_dict, custom_qoe_path)
+    
+    # 6. 生成报告
     report_path = os.path.join(RESULT_DIR, "video_quality_report.txt")
-    generate_report(data_dict, report_path)
+    generate_report(data_dict, report_path, args.warmup)
     
     print("\n" + "=" * 100)
     print("分析完成！")
@@ -875,6 +1022,7 @@ def main():
     print(f"  - video_fps_comparison{suffix}.pdf           # 帧率对比图")
     print(f"  - video_resolution_timeline{suffix}.pdf      # 分辨率时间线图")
     print("  - video_qoe_metrics.pdf                  # QoE指标图（含分辨率）")
+    print("  - video_custom_qoe.pdf                   # 自定义 QoE 对比图")
     print("\n使用提示:")
     print("  python3 eval/eval_video_stats.py                    # 显示原始数据")
     print("  python3 eval/eval_video_stats.py --smooth           # 使用平滑处理")

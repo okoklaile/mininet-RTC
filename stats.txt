@@ -1,0 +1,40 @@
+#ifndef MODULES_THIRD_PARTY_CMDINFER_H_
+#define MODULES_THIRD_PARTY_CMDINFER_H_
+
+#include <cinttypes>
+#include <cstddef>
+
+namespace cmdinfer {
+    // 上报网络层状态（按数据包上报）
+    void ReportStates(
+        std::uint64_t sendTimeMs,      // 数据包发送时间（从 AbsSendTime 提取）
+        std::uint64_t receiveTimeMs,   // 数据包到达接收端的本地时间
+        std::size_t payloadSize,       // RTP 负载大小（字节）
+        std::uint8_t payloadType,      // 负载类型（编解码器标识）
+        std::uint16_t sequenceNumber,  // RTP 序列号
+        std::uint32_t ssrc,            // 同步源标识（区分不同流）
+        std::size_t paddingLength,     // 填充长度
+        std::size_t headerLength);     // RTP 头部长度
+
+    // 上报 QoE（体验质量）统计信息（周期性上报）
+    void ReportQoEStats(
+        std::uint32_t renderFps,              // 当前渲染帧率
+        std::uint32_t freezeCount,            // 累计卡顿次数
+        std::uint32_t totalFreezesDurationMs, // 累计卡顿持续时间（ms）
+        std::uint32_t framesDropped,          // 累计丢帧数
+        std::uint32_t interframeDelayMaxMs,   // 最大帧间延迟（反映流畅度波动）
+        std::uint32_t jitterBufferMs,         // 当前抖动缓冲区深度（ms）
+        std::uint32_t decodeMs,               // 平均解码耗时（ms）
+        std::uint32_t targetDelayMs,          // 播放系统目标延迟（ms）
+        std::uint32_t currentDelayMs,         // 播放系统当前实际延迟（ms）
+        std::uint32_t width,                  // 视频宽度
+        std::uint32_t height,                 // 视频高度
+        std::uint64_t totalDecodeTimeMs,      // 累计解码总耗时（ms）
+        std::uint64_t qpSum,                  // 累计 QP（量化参数）总和，反映清晰度
+        int32_t networkDelayMs,               // 网络延迟（通常为 RTT/2）
+        int32_t e2eDelayMs);                  // 端到端总延迟（采集到渲染）
+
+    float GetEstimatedBandwidth();
+}
+
+#endif

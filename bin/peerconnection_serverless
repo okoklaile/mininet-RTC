@@ -15,7 +15,7 @@ import cmdinfer
 def main():
     # Get the absolute path of the binary
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    binary_path = os.path.join(script_dir, "peerconnection_serverless.origin")
+    binary_path = os.path.join(script_dir, "peerconnection_serverless.origin_v10")
     
     # 确保 LD_LIBRARY_PATH 包含 lib 目录
     lib_dir = os.path.join(os.path.dirname(script_dir), 'lib')
@@ -27,6 +27,7 @@ def main():
     # v1最原始版本，v2添加了生成块视频，v3更改了上限rate,v4更改了日志结构，
     # v5增加了丢包率，网络延迟等的日志统计，
     # v6增加了日志内容看limitation在哪,v7调整了最大kbps的限制更合理了.
+    # v8fake帧生成，v9去除挂起限制,v10增加了bwe的返回信息
     app = subprocess.Popen(
         [binary_path] + sys.argv[1:],
         bufsize=0,  # 使用无缓冲模式（二进制模式下不支持行缓冲）

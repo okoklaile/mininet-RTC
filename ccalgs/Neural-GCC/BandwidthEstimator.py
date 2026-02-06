@@ -610,7 +610,7 @@ class Estimator(object):
         # 归一化：我们设置一个 100ms 的排队容忍上限。
         # 意味着如果排队延迟超过 100ms，惩罚项 p_delay 就会达到最大值 1.0
         # 这样会强迫模型将排队延迟控制在 0~100ms 之间，尽可能接近 0
-        p_delay = min(queue_delay / 50.0, 1.0)
+        p_delay = min(queue_delay / 30.0, 1.0)
         
         # 3. 丢包 (Linear, 0~1)
         # 参考逻辑：直接使用 loss_ratio
@@ -626,7 +626,7 @@ class Estimator(object):
         # 我们保持这个比例，但稍微调整系数以适应我们的归一化尺度
         # 再次强化延迟惩罚，确保模型不敢越雷池一步
         
-        reward = r_tp - 5.0 * p_delay - 5.0 * p_loss - 0.1 * p_stability
+        reward = r_tp - 10.0 * p_delay - 5.0 * p_loss - 0.1 * p_stability
         
         return round(float(reward), 4)
 
