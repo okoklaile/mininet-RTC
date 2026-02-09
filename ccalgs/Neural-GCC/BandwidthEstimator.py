@@ -186,6 +186,11 @@ class Estimator(object):
         self.prev_throughput = 0.0
         self.prev_loss = 0.0
         self.prev_rtt = 0.0
+        
+        # 新增 QoE 状态存储
+        self.last_qoe_stats = {}
+        self.last_freeze_duration = 0
+        self.cached_qoe_penalty = 0.0 # 缓存的 QoE 惩罚，用于填补 1s 的空窗期
 
         # --- Slow Start / GCC Init ---
         self.use_slow_start = use_slow_start
@@ -232,6 +237,11 @@ class Estimator(object):
         self.feature_history.clear()
         self.min_delay_seen = float('inf')
         
+        # Reset QoE state
+        self.last_qoe_stats = {}
+        self.last_freeze_duration = 0
+        self.cached_qoe_penalty = 0.0
+        
         if self.use_rl:
             self.last_state = None
             self.last_action = None
@@ -266,6 +276,41 @@ class Estimator(object):
     def report_states(self, stats: dict):
         """接收数据包报告"""
         if stats.get("type") == "qoe":
+            self.last_qoe_stats = stats
+            
+            # --- 处理 QoE 稀疏性问题 (1s 一次) ---
+            # 我们在收到报告时立即计算“惩罚强度”，并在接下来的 1s 内持续生效，
+            # 直到下一次报告到来更新这个强度。
+            
+            # 1. 计算卡顿增量
+            total_freeze = stats.get("totalFreezesDurationMs", 0)
+            freeze_delta = max(0, total_freeze - self.last_freeze_duration)
+            self.last_freeze_duration = total_freeze 
+            
+            # 2. 计算惩罚值 (归一化)
+            # 如果这一秒内发生了卡顿，我们认为网络状态极差，
+            # 这个惩罚应该持续作用于接下来的每一步，直到收到“不再卡顿”的消息。
+            p_freeze = 0.0
+            if freeze_delta > 0:
+                p_freeze = min(freeze_delta / 100.0, 1.0) # 100ms 卡顿即满罚
+                
+            # 3. 计算端到端延迟惩罚 (重点惩罚非网络延迟部分，如编解码、渲染排队)
+            e2e_delay = stats.get("e2eDelayMs", 0)
+            network_delay = stats.get("networkDelayMs", 0)
+            
+            # system_delay = e2e - network (代表系统内部处理耗时，如 JitterBuffer + 解码 + 渲染)
+            # 如果 system_delay 过大，说明接收端处理不过来了，应该降低码率
+            system_delay = max(0, e2e_delay - network_delay)
+            
+            p_e2e = 0.0
+            # 设定阈值：例如系统处理延迟超过 100ms 开始惩罚
+            if system_delay > 100:
+                p_e2e = min((system_delay - 100) / 200.0, 1.0)
+                
+            # 4. 存储总惩罚 (权重已包含在内)
+            # reward公式里是: -2.0 * p_e2e - 5.0 * p_freeze
+            self.cached_qoe_penalty = 10 * p_e2e + 10 * p_freeze
+            
             return
             
         packet_info = PacketInfo()
@@ -336,17 +381,25 @@ class Estimator(object):
         recv_rate_mean = np.mean(self.recv_rate_history) if len(self.recv_rate_history) > 0 else receiving_rate
         recv_rate_std = np.std(self.recv_rate_history) if len(self.recv_rate_history) > 1 else 0.0
         
+        # 获取 QoE 特征: Jitter Buffer
+        # 归一化: 假设最大 1000ms, 映射到 0-1
+        jitter_buffer_ms = self.last_qoe_stats.get("jitterBufferMs", 0.0)
+        jitter_buffer_norm = min(jitter_buffer_ms / 1000.0, 1.0)
+        
         # 构造特征向量
         features_raw = np.array([
             delay, loss_ratio, receiving_rate, self.prev_bandwidth, delay_gradient, throughput_effective,
             delay_mean, delay_std, delay_min, queue_delay, delay_accel, delay_trend,
             loss_change,
             bw_utilization, recv_rate_mean, recv_rate_std,
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            jitter_buffer_norm, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         ], dtype=np.float32)
         
         features_norm = self._normalize_features(features_raw)
+        
+        # 手动覆盖 jitter (因为 _normalize_features 可能会跳过它或把它清零)
+        features_norm[16] = jitter_buffer_norm
         
         # 更新特征历史并构造 10-step 序列
         self.feature_history.append(features_norm)
@@ -381,9 +434,9 @@ class Estimator(object):
                     self._check_and_save_model()
 
         # 3. 前向传播 (Base Model 作为 Actor)
-        # 对序列进行 Mask (只保留前 16 维特征，与预训练保持一致)
+        # 对序列进行 Mask (只保留前 17 维特征: 16 原有 + 1 Jitter)
         input_seq = state_seq.copy()
-        input_seq[:, 16:] = 0.0 
+        input_seq[:, 17:] = 0.0 
         
         input_tensor = torch.from_numpy(input_seq).unsqueeze(0).to(self.device) # [1, 10, 32]
         
@@ -460,16 +513,22 @@ class Estimator(object):
         recv_rate_mean = np.mean(self.recv_rate_history) if len(self.recv_rate_history) > 0 else receiving_rate
         recv_rate_std = np.std(self.recv_rate_history) if len(self.recv_rate_history) > 1 else 0.0
         
+        # 获取 QoE 特征: Jitter Buffer
+        jitter_buffer_ms = self.last_qoe_stats.get("jitterBufferMs", 0.0)
+        jitter_buffer_norm = min(jitter_buffer_ms / 1000.0, 1.0)
+        
         features_raw = np.array([
             delay, loss_ratio, receiving_rate, self.prev_bandwidth, delay_gradient, throughput_effective,
             delay_mean, delay_std, delay_min, queue_delay, delay_accel, delay_trend,
             loss_change,
             bw_utilization, recv_rate_mean, recv_rate_std,
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            jitter_buffer_norm, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         ], dtype=np.float32)
         
         features_norm = self._normalize_features(features_raw)
+        features_norm[16] = jitter_buffer_norm
+        
         self.feature_history.append(features_norm)
         
         self.prev_delay = delay
@@ -489,8 +548,9 @@ class Estimator(object):
         old_log_probs = torch.cat([x[5] for x in self.storage]).view(-1, 1)
         
         # Mask input for states (consistent with forward)
-        states[:, :, 16:] = 0.0
-        next_states[:, :, 16:] = 0.0
+        # 允许前 17 维 (0-16)
+        states[:, :, 17:] = 0.0
+        next_states[:, :, 17:] = 0.0
         
         # --- GAE (Generalized Advantage Estimation) 计算 ---
         with torch.no_grad():
@@ -589,17 +649,21 @@ class Estimator(object):
         """
         
         # 1. 吞吐量 (Log-scale, 0~1)
-        # 参考逻辑：liner_to_log(receiving_rate)
+        # 调整策略：降低高带宽带来的奖励收益，抑制模型盲目追求高带宽
+        # 方法：增加 Log 函数的底数或直接降低权重，让边际收益递减得更快
         min_bw = 80000.0
         max_bw = self.config.NORM_STATS['receiving_rate']['max']
         
         def liner_to_log(val):
             val_mbps = np.clip(val / 1e6, min_bw / 1e6, max_bw / 1e6)
-            log_val = np.log(val_mbps)
-            log_min, log_max = np.log(min_bw / 1e6), np.log(max_bw / 1e6)
+            # 使用 Log10 代替 Loge，使得高带宽的奖励增长更平缓
+            log_val = np.log10(val_mbps)
+            log_min, log_max = np.log10(min_bw / 1e6), np.log10(max_bw / 1e6)
             return (log_val - log_min) / (log_max - log_min)
 
-        r_tp = liner_to_log(receiving_rate)
+        # 降低吞吐量奖励的权重：从 1.0 (隐式) 降为 0.5
+        # 这样即使带宽翻倍，奖励也只增加一点点，不值得为此冒险增加延迟
+        r_tp = 0.5 * liner_to_log(receiving_rate)
         
         # 2. 延迟 (Linear, 0~1)
         # 目标：让延迟接近最小延迟 -> 重点惩罚排队延迟 (Queue Delay)
@@ -621,12 +685,15 @@ class Estimator(object):
         delta_prediction = abs(current_prediction - last_prediction)
         p_stability = liner_to_log(delta_prediction)
         
+        # 5. QoE 惩罚 (使用缓存的持续惩罚值)
+        # 解决了 QoE 报告稀疏 (1s) 而决策频繁 (200ms) 的问题。
+        # 如果上一秒报告了卡顿，这个惩罚会一直存在，迫使模型在这一整秒内都保持谨慎。
+        penalty_qoe = self.cached_qoe_penalty
+
         # --- 最终奖励组合 ---
-        # 参考权重：reward = r_tp - 1.5 * p_delay - 1.5 * p_loss - 0.02 * p_stability
-        # 我们保持这个比例，但稍微调整系数以适应我们的归一化尺度
-        # 再次强化延迟惩罚，确保模型不敢越雷池一步
+        # reward = r_tp - 10*p_delay - 5*p_loss - 0.1*p_stability - penalty_qoe
         
-        reward = r_tp - 10.0 * p_delay - 5.0 * p_loss - 0.1 * p_stability
+        reward = r_tp - 10.0 * p_delay - 10 * p_loss - 10 * p_stability - penalty_qoe
         
         return round(float(reward), 4)
 

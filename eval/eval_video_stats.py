@@ -170,7 +170,7 @@ class VideoMetrics:
     """计算视频质量指标"""
     
     @staticmethod
-    def remove_outliers(data, multiplier=3):
+    def remove_outliers(data, multiplier=10):
         """
         使用 IQR (Interquartile Range) 方法剔除极端异常值
         multiplier=3.0 表示剔除极度异常值（通常 1.5 是温和异常，3.0 是极端异常）

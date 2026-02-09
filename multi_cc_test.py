@@ -39,6 +39,8 @@ ALL_ALGORITHMS = [
 
 # 可测试的算法列表 - 注释掉不想测试的算法
 ALGORITHMS = [
+    'Neural-GCC',
+    'BC-GCC',
     'GCC', 
     #'BBR', 
     #'dummy',
@@ -50,17 +52,15 @@ ALGORITHMS = [
     #'Copa+',
     #'Cubic',
     #'PCC',
-    'BC-GCC',
     #'RL',
-    'Neural-GCC'
 ]
 
 # 默认网络配置（当没有使用trace时）
 PORT = 8000
 DEFAULT_BANDWIDTH = '5Mbps'
 DEFAULT_DELAY = '30ms'
-DEFAULT_LOSS = 0
-QUEUE_SIZE = 10
+DEFAULT_LOSS = 2
+QUEUE_SIZE = 500
 
 # 测试时长（秒）- 如果使用trace，会根据trace总时长自动调整
 TEST_DURATION = 60*10

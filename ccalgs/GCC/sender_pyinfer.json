@@ -3,7 +3,7 @@
         "autoclose": 12664,
         "sender": {
             "enabled": true,
-            "dest_ip": "10.0.0.1",
+            "dest_ip": "10.0.2.1",
             "dest_port": 8000
         },
         "receiver": {
@@ -34,7 +34,7 @@
             "enabled": false
         },
         "audio_file": {
-            "enabled": true,
+            "enabled": false,
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.wav"
         }
     },

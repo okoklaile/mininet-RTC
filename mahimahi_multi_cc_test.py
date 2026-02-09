@@ -37,7 +37,7 @@ ALL_ALGORITHMS = [
     'GCC', 
     'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
     'Cubic', 'FARC', 'Gemini', 'HRCC', 'Schaferct',
-    'BC-GCC',
+    'BC-GCC','Neural-GCC'
 ]
 
 # 可测试的算法列表 - 注释掉不想测试的算法
@@ -53,7 +53,8 @@ ALGORITHMS = [
     #'Copa+',
     #'Cubic',
     #'PCC',
-    'BC-GCC'
+    'BC-GCC',
+    'Neural-GCC'
 ]
 
 # 默认网络配置

@@ -23,9 +23,9 @@
         },
         "video_file": {
             "enabled": false,
-            "height": 240,
-            "width": 320,
-            "fps": 10,
+            "height": 1080,
+            "width": 1920,
+            "fps": 60,
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.yuv"
         }
     },
@@ -51,7 +51,7 @@
         }
     },
     "logging": {
-        "enabled": false,
-        "log_output_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/sender.log"
+        "enabled": true,
+        "log_output_path": "/home/wyq/\u684c\u9762/mininet-RTC/output/GCC_sender.log"
     }
 }

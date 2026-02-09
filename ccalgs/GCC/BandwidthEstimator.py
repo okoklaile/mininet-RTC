@@ -8,7 +8,7 @@ import collections
 kMinNumDeltas = 60  # 最小延迟样本数量
 threshold_gain_ = 4  # 阈值增益系数
 kBurstIntervalMs = 5  # 数据包突发分组的时间间隔(毫秒)
-kTrendlineWindowSize = 20  # 趋势线计算的窗口大小
+kTrendlineWindowSize = 20  # 趋势线计算的窗口大小20
 kTrendlineSmoothingCoeff = 0.9  # 趋势线平滑系数
 kOverUsingTimeThreshold = 10  # 过载检测时间阈值(毫秒)
 kMaxAdaptOffsetMs = 15.0  # 最大自适应偏移量(毫秒)
@@ -45,7 +45,7 @@ class Estimator(object):
         self.time_last_bitrate_change_ = -1  # 上次比特率变化的时间
 
         # 过载检测相关
-        self.gamma1 = 12.5 # 动态阈值，用于判断网络过载/空闲
+        self.gamma1 = 25 # 动态阈值，用于判断网络过载/空闲
         self.num_of_deltas_ = 0  # 延迟梯度样本数量
         self.time_over_using = -1  # 过载持续时间
         self.prev_trend = 0.0  # 上一次的趋势值
@@ -79,7 +79,7 @@ class Estimator(object):
         self.rate_control_region_ = "kRcMaxUnknown"
         self.time_last_bitrate_change_ = -1 
 
-        self.gamma1 = 12.5
+        self.gamma1 = 25
         self.num_of_deltas_ = 0
         self.time_over_using = -1
         self.prev_trend = 0.0
@@ -550,7 +550,7 @@ class Estimator(object):
             self.time_last_bitrate_change_ = self.now_ms
         elif state == 'Decrease':
             # 网络过载，需要快速降低带宽（乘性减少）
-            beta = 0.85  # 衰减系数
+            beta = 0.9  # 衰减系数0.85
             bandwidth_estimation = beta * estimated_throughput_bps + 0.5
             # 确保带宽估计不会反而增加
             if bandwidth_estimation > self.last_bandwidth_estimation:
