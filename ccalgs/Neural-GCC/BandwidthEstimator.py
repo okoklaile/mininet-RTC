@@ -191,6 +191,7 @@ class Estimator(object):
         self.last_qoe_stats = {}
         self.last_freeze_duration = 0
         self.cached_qoe_penalty = 0.0 # 缓存的 QoE 惩罚，用于填补 1s 的空窗期
+        self.last_render_fps = 0.0  # 缓存渲染帧率
 
         # --- Slow Start / GCC Init ---
         self.use_slow_start = use_slow_start
@@ -241,6 +242,7 @@ class Estimator(object):
         self.last_qoe_stats = {}
         self.last_freeze_duration = 0
         self.cached_qoe_penalty = 0.0
+        self.last_render_fps = 0.0
         
         if self.use_rl:
             self.last_state = None
@@ -277,6 +279,9 @@ class Estimator(object):
         """接收数据包报告"""
         if stats.get("type") == "qoe":
             self.last_qoe_stats = stats
+            
+            # 缓存 render_fps
+            self.last_render_fps = stats.get("renderFps", 0.0)
             
             # --- 处理 QoE 稀疏性问题 (1s 一次) ---
             # 我们在收到报告时立即计算“惩罚强度”，并在接下来的 1s 内持续生效，
@@ -386,20 +391,25 @@ class Estimator(object):
         jitter_buffer_ms = self.last_qoe_stats.get("jitterBufferMs", 0.0)
         jitter_buffer_norm = min(jitter_buffer_ms / 1000.0, 1.0)
         
+        # 获取 QoE 特征: Render FPS
+        # 归一化: 假设最大 60fps, 映射到 0-1
+        render_fps_norm = min(self.last_render_fps / 60.0, 1.0)
+        
         # 构造特征向量
         features_raw = np.array([
             delay, loss_ratio, receiving_rate, self.prev_bandwidth, delay_gradient, throughput_effective,
             delay_mean, delay_std, delay_min, queue_delay, delay_accel, delay_trend,
             loss_change,
             bw_utilization, recv_rate_mean, recv_rate_std,
-            jitter_buffer_norm, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            jitter_buffer_norm, render_fps_norm, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         ], dtype=np.float32)
         
         features_norm = self._normalize_features(features_raw)
         
-        # 手动覆盖 jitter (因为 _normalize_features 可能会跳过它或把它清零)
+        # 手动覆盖 jitter 和 render_fps (因为 _normalize_features 可能会跳过它们或把它们清零)
         features_norm[16] = jitter_buffer_norm
+        features_norm[17] = render_fps_norm
         
         # 更新特征历史并构造 10-step 序列
         self.feature_history.append(features_norm)
@@ -434,9 +444,9 @@ class Estimator(object):
                     self._check_and_save_model()
 
         # 3. 前向传播 (Base Model 作为 Actor)
-        # 对序列进行 Mask (只保留前 17 维特征: 16 原有 + 1 Jitter)
+        # 对序列进行 Mask (只保留前 18 维特征: 16 原有 + 1 Jitter + 1 RenderFPS)
         input_seq = state_seq.copy()
-        input_seq[:, 17:] = 0.0 
+        input_seq[:, 18:] = 0.0 
         
         input_tensor = torch.from_numpy(input_seq).unsqueeze(0).to(self.device) # [1, 10, 32]
         
@@ -517,17 +527,21 @@ class Estimator(object):
         jitter_buffer_ms = self.last_qoe_stats.get("jitterBufferMs", 0.0)
         jitter_buffer_norm = min(jitter_buffer_ms / 1000.0, 1.0)
         
+        # 获取 QoE 特征: Render FPS
+        render_fps_norm = min(self.last_render_fps / 60.0, 1.0)
+        
         features_raw = np.array([
             delay, loss_ratio, receiving_rate, self.prev_bandwidth, delay_gradient, throughput_effective,
             delay_mean, delay_std, delay_min, queue_delay, delay_accel, delay_trend,
             loss_change,
             bw_utilization, recv_rate_mean, recv_rate_std,
-            jitter_buffer_norm, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            jitter_buffer_norm, render_fps_norm, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         ], dtype=np.float32)
         
         features_norm = self._normalize_features(features_raw)
         features_norm[16] = jitter_buffer_norm
+        features_norm[17] = render_fps_norm
         
         self.feature_history.append(features_norm)
         
@@ -548,9 +562,9 @@ class Estimator(object):
         old_log_probs = torch.cat([x[5] for x in self.storage]).view(-1, 1)
         
         # Mask input for states (consistent with forward)
-        # 允许前 17 维 (0-16)
-        states[:, :, 17:] = 0.0
-        next_states[:, :, 17:] = 0.0
+        # 允许前 18 维 (0-17)
+        states[:, :, 18:] = 0.0
+        next_states[:, :, 18:] = 0.0
         
         # --- GAE (Generalized Advantage Estimation) 计算 ---
         with torch.no_grad():

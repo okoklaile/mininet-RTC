@@ -1,0 +1,120 @@
+# Neural-GCC System Design Specification
+
+## 1. 系统架构概述 (System Architecture Overview)
+
+Neural-GCC 是一款基于深度神经网络的实时带宽估计器 (Bandwidth Estimator)，专为 WebRTC 实时通信场景设计。与传统的基于规则的算法（如 Google Congestion Control, GCC）不同，Neural-GCC 完全摒弃了固定的线性控制逻辑，采用端到端的神经网络模型直接从网络状态特征映射到最优带宽决策。
+
+系统核心采用 **"Pre-training + Online Fine-tuning"** 的两阶段范式：
+1.  **离线模仿学习 (Offline Behavior Cloning)**: 使用 LSTM 网络在海量历史数据上模仿 GCC 的行为，获得一个具备基础拥塞控制能力的初始策略 (Base Policy)，解决了强化学习冷启动不稳定的问题。
+2.  **在线强化学习 (Online Reinforcement Learning)**: 在实际运行过程中，利用 **PPO (Proximal Policy Optimization)** 算法，根据实时的网络反馈（延迟、丢包）和应用层 QoE 反馈（卡顿、Jitter Buffer），对模型参数进行微调，以适应复杂多变的真实网络环境。
+
+## 2. 神经网络模型架构 (Neural Network Architecture)
+
+Neural-GCC 采用 **Actor-Critic** 架构，其中 Actor（策略网络）和 Critic（价值网络）共享底层的时序特征提取层，以减少计算量并促进特征表示的学习。
+
+### 2.1 输入层 (Input Layer)
+*   **输入维度**: $32$ (Feature Dimension)
+*   **序列长度**: $T=10$ (Time Steps)。对应过去 2秒的历史数据（每步时间间隔 200ms）。
+*   **输入形状**: `[Batch_Size, 10, 32]`
+
+### 2.2 共享特征提取层 (Shared Feature Extractor)
+Actor 和 Critic 共享一个双层 LSTM 结构，用于捕获网络状态的时序依赖性。
+*   **类型**: LSTM (Long Short-Term Memory)
+*   **层数 (Layers)**: 2
+*   **隐藏层大小 (Hidden Size)**: 256
+*   **Dropout**: 0.2 (仅在第一层 LSTM 输出后应用，防止过拟合)
+*   **初始化**: 正交初始化 (Orthogonal Initialization) 用于 LSTM 权重，偏置初始化为 0。
+
+### 2.3 Actor 网络 (Policy Network)
+负责输出动作（带宽预测值）。
+*   **结构**: 多层感知机 (MLP)
+    *   **Layer 1**: Linear (256 $\to$ 64) + ReLU
+    *   **Layer 2**: Linear (64 $\to$ 32) + ReLU
+    *   **Output Layer**: Linear (32 $\to$ 1) + Sigmoid
+*   **输出映射**: Sigmoid 输出范围为 $(0, 1)$，经过反归一化映射到物理带宽范围 $[50 \text{ kbps}, 10 \text{ Mbps}]$。
+*   **探索机制 (Exploration)**:
+    *   **训练时**: 从高斯分布 $\mathcal{N}(\mu, \sigma)$ 中采样。$\mu$ 为网络输出，$\sigma$ 由可学习参数 `log_std` 控制（初始值设为 -3.0，即 $\sigma \approx 0.05$），保证在局部进行微小探索。
+    *   **推理时**: 直接使用均值 $\mu$ (Deterministic Policy)。
+
+### 2.4 Critic 网络 (Value Network)
+负责估计当前状态的价值 $V(s)$，用于计算优势函数 (Advantage)。
+*   **结构**: 多层感知机 (MLP)
+    *   **Layer 1**: Linear (256 $\to$ 64) + ReLU
+    *   **Layer 2**: Linear (64 $\to$ 32) + ReLU
+    *   **Output Layer**: Linear (32 $\to$ 1) (无激活函数，直接输出标量价值)
+
+## 3. 特征工程详述 (Feature Engineering Details)
+
+输入特征向量包含 **32维**，经过 Min-Max 归一化处理。主要由 17 个核心特征和 15 个保留特征（补零）组成。
+
+### 3.1 核心特征 (Core Features, Indices 0-16)
+1.  **delay**: 当前单向延迟 (One-way Delay, ms)。归一化范围 $[0, 10000]$。
+2.  **loss_ratio**: 当前丢包率 (Packet Loss Ratio)。范围 $[0, 1]$。
+3.  **receiving_rate**: 当前接收速率 (bps)。归一化范围 $[0, 10\text{Mbps}]$。
+4.  **prev_bandwidth**: 上一时刻的模型预测带宽 (bps)。
+5.  **delay_gradient**: 延迟梯度 (当前延迟 - 上次延迟)。
+6.  **throughput_effective**: 有效吞吐量 $= \text{receiving\_rate} \times (1 - \text{loss\_ratio})$。
+7.  **delay_mean**: 窗口内延迟均值。
+8.  **delay_std**: 窗口内延迟标准差（反映网络抖动）。
+9.  **delay_min**: 窗口内最小延迟（近似传播延迟）。
+10. **queue_delay**: 排队延迟 $= \text{delay} - \text{delay\_min}$。
+11. **delay_accel**: 延迟加速度 (二阶导数)。
+12. **delay_trend**: 延迟趋势线斜率 (Linear Regression Slope)。
+13. **loss_change**: 丢包率变化量。
+14. **bw_utilization**: 带宽利用率 $= \text{receiving\_rate} / \text{prev\_bandwidth}$。
+15. **recv_rate_mean**: 接收速率均值。
+16. **recv_rate_std**: 接收速率标准差。
+17. **jitter_buffer_norm**: **(QoE 特征)** 归一化的接收端 Jitter Buffer 长度。反映视频播放缓冲区的积压情况，直接关联卡顿风险。
+
+### 3.2 数据预处理
+*   **归一化 (Normalization)**: 所有特征根据预定义的统计范围 (`NORM_STATS`) 进行线性映射到 $[0, 1]$。
+*   **截断 (Clipping)**: 超过统计范围的异常值会被截断，防止梯度爆炸。
+*   **序列补全 (Padding)**: 在会话初期不足 10 步时，使用零向量进行左侧填充。
+
+## 4. 在线优化算法参数 (Online PPO Parameters)
+
+Neural-GCC 使用 PPO-Clip 算法进行在线微调。为了保证传输的稳定性，算法参数经过了严格的调整，倾向于**保守更新**。
+
+### 4.1 核心超参数
+*   **优化器 (Optimizer)**: Adam
+    *   **Actor Learning Rate**: $5 \times 10^{-6}$ (极低的学习率，防止策略剧烈震荡)
+    *   **Critic Learning Rate**: $1 \times 10^{-4}$
+*   **折扣因子 (Gamma, $\gamma$)**: 0.99
+*   **GAE 参数 (Lambda)**: 0.95 (用于广义优势估计)
+*   **裁剪参数 (Clip Ratio, $\epsilon$)**: 0.2
+*   **更新频率 (Update Frequency)**: 32 Steps (每 6.4秒收集一批数据进行更新)
+*   **更新轮次 (Update Epochs)**: 5 (每次更新在同一批数据上迭代 5 次)
+*   **Batch Size**: 32 (与更新频率一致，On-policy)
+
+### 4.2 损失函数设计 (Loss Function)
+$$ L = L_{actor} + 0.5 \cdot L_{critic} - 0.01 \cdot H + \lambda \cdot D_{KL} $$
+
+其中：
+*   $L_{actor}$: PPO Clipped Surrogate Loss。
+*   $L_{critic}$: Value Function MSE Loss。
+*   $H$: 策略熵 (Entropy)，系数 **0.01**，鼓励微小的探索。
+*   $D_{KL}$: **KL 散度惩罚**，系数 **5.0**。
+    *   **设计意图**: 计算当前在线策略 $\pi_{online}$ 与原始预训练策略 $\pi_{base}$ 之间的 KL 散度。强力约束在线学习不要偏离“专家知识”太远，防止在网络波动时模型“遗忘”基本的拥塞控制规则。
+
+## 5. 奖励函数细节 (Reward Function Specification)
+
+奖励函数 $R_t$ 是在线学习的指挥棒，旨在平衡高带宽、低延迟和高 QoE。
+
+**公式**:
+$$ R_t = r_{tp} - 10 \cdot p_{delay} - 10 \cdot p_{loss} - 10 \cdot p_{stab} - p_{QoE} $$
+
+### 5.1 子项定义
+1.  **吞吐量奖励 ($r_{tp}$)**:
+    *   使用 $\log_{10}$ 函数处理：$r_{tp} = 0.5 \times \text{Normalize}(\log_{10}(\text{throughput}))$。
+    *   **目的**: 降低高带宽带来的边际收益，避免模型为了追求极高带宽而牺牲延迟。
+2.  **延迟惩罚 ($p_{delay}$)**:
+    *   $p_{delay} = \min(\text{queue\_delay} / 30.0, 1.0)$。
+    *   **阈值**: 30ms。意味着只要排队延迟超过 30ms，惩罚就会线性增加，超过 30ms 后达到最大惩罚。这迫使模型将排队延迟控制在极低水平。
+3.  **丢包惩罚 ($p_{loss}$)**:
+    *   直接等于丢包率：$p_{loss} = \text{loss\_ratio}$。
+4.  **稳定性惩罚 ($p_{stab}$)**:
+    *   惩罚带宽预测的剧烈跳变：$p_{stab} = \text{Normalize}(\log(|\Delta \text{bandwidth}|))$。
+5.  **QoE 惩罚 ($p_{QoE}$)**:
+    *   **Cached Penalty 机制**: 解决 QoE 报告稀疏（1秒/次）与控制高频（200ms/次）的时间尺度不匹配问题。
+    *   公式: $p_{QoE} = 10 \cdot p_{freeze} + 10 \cdot p_{e2e\_delay}$
+    *   **触发**: 一旦收到卡顿报告，计算出的惩罚值会被**缓存**，并在接下来的 1秒内持续施加于每个时间步，直到收到新的 QoE 报告。这确保了模型能“记住”卡顿的发生并持续保持低带宽策略。

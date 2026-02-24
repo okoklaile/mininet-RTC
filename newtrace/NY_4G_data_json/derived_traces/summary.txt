@@ -1,0 +1,4 @@
+7Train_Stable_Medium: Stable medium bandwidth (~9 Mbps), low jitter (Avg: 8834 kbps, Range: 3900-11600 kbps)
+7Train_High_Variable: High bandwidth (>100 Mbps) but highly variable (Avg: 218911 kbps, Range: 0-997000 kbps)
+7Train_Low_Stable: Low bandwidth (~4-10 Mbps), relatively stable (Avg: 7436 kbps, Range: 0-15400 kbps)
+7Train_Unstable_Outage: Unstable with complete outages (0 Mbps) (Avg: 3575 kbps, Range: 0-43400 kbps)

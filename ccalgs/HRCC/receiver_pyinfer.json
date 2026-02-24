@@ -1,6 +1,6 @@
 {
     "serverless_connection": {
-        "autoclose": 12664,
+        "autoclose": 1192,
         "sender": {
             "enabled": false
         },
@@ -34,7 +34,7 @@
             "enabled": false
         },
         "audio_file": {
-            "enabled": true,
+            "enabled": false,
             "file_path": "/home/wyq/\u684c\u9762/mininet-RTC/testmedia/test.wav"
         }
     },

@@ -34,12 +34,16 @@ ALL_ALGORITHMS = [
     'GCC', 
     'BBR', 'dummy', 'PCC', 'Copa', 'Copa+',
     'Cubic', 'FARC', 'Gemini', 'HRCC', 'RL-DelayGCC', 'Schaferct',
-    'BC-GCC','RL','Neural-GCC'
+    'BC-GCC','RL','Neural-GCC',
+    'Neural-GCC-NoBC', 'Neural-GCC-NoKL', 'Neural-GCC-NoQoE',
 ]
 
 # 可测试的算法列表 - 注释掉不想测试的算法
 ALGORITHMS = [
-    'Neural-GCC',
+    #'Neural-GCC',
+    #'Neural-GCC-NoBC',
+    #'Neural-GCC-NoKL',
+    #'Neural-GCC-NoQoE',
     'BC-GCC',
     'GCC', 
     #'BBR', 

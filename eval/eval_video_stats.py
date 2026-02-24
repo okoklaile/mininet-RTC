@@ -7,7 +7,7 @@
 - 提取 VideoReceiveStream stats 数据
 - 从视频层的 cum_loss 和 packets_received 计算丢包率
 - 分析视频质量指标（比特率、帧率、延迟、卡顿、丢包等）
-- 生成多维度对比图表
+- 生成多维度对比图表（单张矢量图输出）
 - 生成视频质量评估报告
 
 丢包率计算:
@@ -170,7 +170,7 @@ class VideoMetrics:
     """计算视频质量指标"""
     
     @staticmethod
-    def remove_outliers(data, multiplier=10):
+    def remove_outliers(data, multiplier=3):
         """
         使用 IQR (Interquartile Range) 方法剔除极端异常值
         multiplier=3.0 表示剔除极度异常值（通常 1.5 是温和异常，3.0 是极端异常）
@@ -387,23 +387,92 @@ def smooth_data(data, window_size=5):
 
 
 # ============================================
-# 绘图函数
+# 绘图配置
 # ============================================
 
-def plot_multi_metrics(data_dict, output_path, smooth=False, smooth_window=5):
-    """
-    绘制多指标对比图（3x3子图）
+# 算法颜色映射 (保持与 Tradeoff 图一致)
+COLOR_MAP = {
+    'Neural-GCC': '#32CD32',       # LimeGreen
+    'Neural-GCC-NoQoE': '#00BFFF', # DeepSkyBlue
+    'Neural-GCC-NoKL': '#FF4500',  # OrangeRed
+    'Neural-GCC-NoBC': '#FFD700',  # Gold
+}
+
+def get_algo_color(algo_name, default=None):
+    """根据算法名称获取颜色"""
+    # 精确匹配
+    if algo_name in COLOR_MAP:
+        return COLOR_MAP[algo_name]
     
-    参数:
-    - data_dict: {算法名: (time_series, aggregated)}
-    - output_path: 输出路径
-    - smooth: 是否平滑
-    - smooth_window: 平滑窗口
-    """
-    fig, axes = plt.subplots(3, 3, figsize=(18, 15))
-    fig.suptitle('Video Quality Multi-Metric Comparison', fontsize=20, fontweight='bold', y=0.995)
+    # 模糊匹配
+    if 'NoQoE' in algo_name: return COLOR_MAP['Neural-GCC-NoQoE']
+    if 'NoKL' in algo_name: return COLOR_MAP['Neural-GCC-NoKL']
+    if 'NoBC' in algo_name: return COLOR_MAP['Neural-GCC-NoBC']
+    if 'Neural-GCC' in algo_name: return COLOR_MAP['Neural-GCC']
     
-    # 定义要绘制的指标
+    return default
+
+
+# ============================================
+# 绘图函数 (单张矢量图)
+# ============================================
+
+def save_single_plot(time_series_dict, metric_key, output_path, title_cn, ylabel, smooth=False, smooth_window=5):
+    """绘制并保存单个指标的图表"""
+    plt.figure(figsize=(8, 5))
+    
+    # 确保图例顺序：Neural-GCC 优先
+    sorted_items = sorted(time_series_dict.items(), key=lambda x: x[0])
+    # 尝试让 Neural-GCC 排在前面或特定顺序
+    desired_order = ['Neural-GCC', 'Neural-GCC-NoQoE', 'Neural-GCC-NoKL', 'Neural-GCC-NoBC']
+    
+    # 创建排序索引
+    def sort_key(item):
+        name = item[0]
+        for i, key in enumerate(desired_order):
+            if key in name:
+                return i
+        return 999
+        
+    sorted_items = sorted(time_series_dict.items(), key=sort_key)
+    
+    for algo_name, (time_series, _) in sorted_items:
+        # 特殊处理 BWE
+        if metric_key == 'bwe_mbps':
+            time = time_series.get('bwe_time', [])
+            data = time_series.get('bwe_mbps', [])
+        else:
+            time = time_series['time']
+            data = time_series.get(metric_key, [])
+        
+        if len(data) == 0:
+            continue
+            
+        if smooth and len(data) > smooth_window:
+            try:
+                data = smooth_data(data, smooth_window)
+            except:
+                pass
+        
+        color = get_algo_color(algo_name)
+        plt.plot(time, data, label=algo_name, linewidth=2, alpha=0.8, color=color)
+    
+    plt.xlabel('Time (s)', fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    # plt.title(title_cn, fontsize=14, fontweight='bold') # 去掉标题
+    plt.legend(loc='best', fontsize=19)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
+    plt.close()
+    print(f"  - 保存: {os.path.basename(output_path)}")
+
+def plot_multi_metrics(data_dict, output_dir, smooth=False, smooth_window=5):
+    """
+    绘制多指标对比图（单张输出）
+    """
+    print(f"正在生成基础指标图表...")
+    
     metrics_config = [
         ('total_bps', 'Video Bitrate', 'Bitrate (Mbps)'),
         ('bwe_mbps', 'Send Back BWE', 'BWE (Mbps)'),
@@ -416,53 +485,17 @@ def plot_multi_metrics(data_dict, output_path, smooth=False, smooth_window=5):
         ('nack', 'NACK Count', 'NACK Count'),
     ]
     
-    for idx, (metric_key, title_cn, ylabel) in enumerate(metrics_config):
-        row = idx // 3
-        col = idx % 3
-        ax = axes[row, col]
-        
-        for algo_name, (time_series, _) in data_dict.items():
-            # 特殊处理 BWE，因为它有自己的时间轴
-            if metric_key == 'bwe_mbps':
-                time = time_series.get('bwe_time', [])
-                data = time_series.get('bwe_mbps', [])
-            else:
-                time = time_series['time']
-                data = time_series.get(metric_key, [])
-            
-            if len(data) == 0:
-                continue
-                
-            if smooth and len(data) > smooth_window:
-                # 确保数据长度足够进行平滑
-                try:
-                    data = smooth_data(data, smooth_window)
-                except:
-                    pass
-            
-            ax.plot(time, data, label=algo_name, linewidth=2, alpha=0.8)
-        
-        ax.set_xlabel('Time (s)', fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_title(title_cn, fontsize=14, fontweight='bold')
-        ax.legend(loc='best', fontsize=10)
-        ax.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
-    print(f"✓ 多指标对比图已保存: {output_path}")
-    plt.close()
+    for metric_key, title_cn, ylabel in metrics_config:
+        output_path = os.path.join(output_dir, f"ts_{metric_key}.pdf")
+        save_single_plot(data_dict, metric_key, output_path, title_cn, ylabel, smooth, smooth_window)
 
 
-def plot_fps_comparison(data_dict, output_path, smooth=False, smooth_window=5):
-    """绘制帧率对比图（网络FPS vs 渲染FPS）"""
-    fig, axes = plt.subplots(1, len(data_dict), figsize=(6*len(data_dict), 5))
+def plot_fps_comparison(data_dict, output_dir, smooth=False, smooth_window=5):
+    """绘制帧率对比图（单张输出）"""
+    print(f"正在生成帧率对比图...")
     
-    if len(data_dict) == 1:
-        axes = [axes]
-    
-    for idx, (algo_name, (time_series, _)) in enumerate(data_dict.items()):
-        ax = axes[idx]
+    for algo_name, (time_series, _) in data_dict.items():
+        plt.figure(figsize=(8, 5))
         time = time_series['time']
         
         network_fps = time_series['network_fps']
@@ -474,177 +507,116 @@ def plot_fps_comparison(data_dict, output_path, smooth=False, smooth_window=5):
             render_fps = smooth_data(render_fps, smooth_window)
             decode_fps = smooth_data(decode_fps, smooth_window)
         
-        ax.plot(time, network_fps, label='Network FPS', linewidth=2, alpha=0.8)
-        ax.plot(time, render_fps, label='Render FPS', linewidth=2, alpha=0.8)
-        ax.plot(time, decode_fps, label='Decode FPS', linewidth=2, alpha=0.8, linestyle='--')
+        plt.plot(time, network_fps, label='Network FPS', linewidth=2, alpha=0.8)
+        plt.plot(time, render_fps, label='Render FPS', linewidth=2, alpha=0.8)
+        plt.plot(time, decode_fps, label='Decode FPS', linewidth=2, alpha=0.8, linestyle='--')
         
-        ax.set_xlabel('Time (s)', fontsize=12)
-        ax.set_ylabel('Frame Rate (FPS)', fontsize=12)
-        ax.set_title(f'{algo_name} - Frame Rate Comparison', fontsize=14, fontweight='bold')
-        ax.legend(loc='best', fontsize=11)
-        ax.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
-    print(f"✓ 帧率对比图已保存: {output_path}")
-    plt.close()
+        plt.xlabel('Time (s)', fontsize=12)
+        plt.ylabel('Frame Rate (FPS)', fontsize=12)
+        # plt.title(f'{algo_name} - Frame Rate Comparison', fontsize=14, fontweight='bold') # 去掉标题
+        plt.legend(loc='best', fontsize=14)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        output_path = os.path.join(output_dir, f"fps_compare_{algo_name}.pdf")
+        plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
+        plt.close()
+        print(f"  - 保存: {os.path.basename(output_path)}")
 
 
-def plot_resolution_timeline(data_dict, output_path, smooth=False, smooth_window=5):
-    """绘制分辨率随时间变化的图表"""
-    fig, axes = plt.subplots(1, len(data_dict), figsize=(6*len(data_dict), 5))
+def plot_resolution_timeline(data_dict, output_dir, smooth=False, smooth_window=5):
+    """绘制分辨率随时间变化的图表（单张输出）"""
+    print(f"正在生成分辨率时间线图...")
     
-    if len(data_dict) == 1:
-        axes = [axes]
-    
-    for idx, (algo_name, (time_series, aggregated)) in enumerate(data_dict.items()):
-        ax = axes[idx]
+    for algo_name, (time_series, aggregated) in data_dict.items():
+        plt.figure(figsize=(8, 5))
         time = time_series['time']
         
         widths = time_series['width']
         heights = time_series['height']
         
-        # 计算像素总数（百万像素）
         pixels = [w * h / 1e6 for w, h in zip(widths, heights)]
         
         if smooth and len(pixels) > smooth_window:
             pixels = smooth_data(pixels, smooth_window)
         
-        ax.plot(time, pixels, label='Resolution (MPixels)', linewidth=2, alpha=0.8, color='purple')
+        plt.plot(time, pixels, label='Resolution (MPixels)', linewidth=2, alpha=0.8, color='purple')
         
-        # 标注分辨率变化点
         resolution_changes = aggregated['resolution_changes']
         if resolution_changes > 0:
             for i in range(1, len(widths)):
                 if widths[i] != widths[i-1] or heights[i] != heights[i-1]:
-                    ax.axvline(x=time[i], color='red', linestyle='--', alpha=0.5, linewidth=1)
-                    ax.text(time[i], max(pixels) * 0.9, f'{int(widths[i])}x{int(heights[i])}', 
+                    plt.axvline(x=time[i], color='red', linestyle='--', alpha=0.5, linewidth=1)
+                    plt.text(time[i], max(pixels) * 0.9, f'{int(widths[i])}x{int(heights[i])}', 
                            rotation=90, va='top', fontsize=8, color='red')
         
-        ax.set_xlabel('Time (s)', fontsize=12)
-        ax.set_ylabel('Resolution (MPixels)', fontsize=12)
-        ax.set_title(f'{algo_name} - Video Resolution\n(Changes: {resolution_changes})', 
-                    fontsize=14, fontweight='bold')
-        ax.legend(loc='best', fontsize=11)
-        ax.grid(True, alpha=0.3)
+        plt.xlabel('Time (s)', fontsize=12)
+        plt.ylabel('Resolution (MPixels)', fontsize=12)
+        # plt.title(f'{algo_name} - Video Resolution', fontsize=14, fontweight='bold') # 去掉标题
+        plt.legend(loc='best', fontsize=14)
+        plt.grid(True, alpha=0.3)
         
-        # 在图表上显示平均分辨率
-        avg_res = aggregated['resolution']
-        ax.text(0.02, 0.98, f'Avg: {avg_res}', transform=ax.transAxes,
-               fontsize=10, verticalalignment='top',
-               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        output_path = os.path.join(output_dir, f"resolution_{algo_name}.pdf")
+        plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
+        plt.close()
+        print(f"  - 保存: {os.path.basename(output_path)}")
+
+
+def save_single_bar_plot(algos, data, metric_name, output_path, ylabel, default_color):
+    """绘制单张柱状图"""
+    plt.figure(figsize=(8, 5))
     
+    # 为每个柱子生成颜色
+    bar_colors = []
+    for algo in algos:
+        c = get_algo_color(algo)
+        if c:
+            bar_colors.append(c)
+        else:
+            bar_colors.append(default_color)
+            
+    bars = plt.bar(algos, data, color=bar_colors, alpha=0.8, edgecolor='black')
+    plt.ylabel(ylabel, fontsize=12)
+    # plt.title(metric_name, fontsize=14, fontweight='bold') # 去掉标题
+    plt.grid(axis='y', alpha=0.3)
+    
+    # 添加数值标签
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height,
+                f'{height:.2f}', ha='center', va='bottom', fontsize=10)
+    
+    plt.xticks(rotation=30)
     plt.tight_layout()
     plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
-    print(f"✓ 分辨率时间线图已保存: {output_path}")
     plt.close()
+    print(f"  - 保存: {os.path.basename(output_path)}")
 
-
-def plot_qoe_metrics(data_dict, output_path):
-    """绘制QoE（用户体验质量）指标柱状图"""
+def plot_qoe_metrics(data_dict, output_dir):
+    """绘制QoE（用户体验质量）指标柱状图（单张输出）"""
+    print(f"正在生成 QoE 统计图...")
     algos = list(data_dict.keys())
     
-    # 提取QoE相关指标
-    freeze_counts = [data_dict[a][1]['total_freeze_count'] for a in algos]
-    freeze_durations = [data_dict[a][1]['total_freeze_duration'] / 1000.0 for a in algos]  # 转换为秒
-    freeze_rates = [data_dict[a][1]['freeze_rate'] for a in algos]  # 卡顿率
-    packet_loss_rates = [data_dict[a][1]['packet_loss_rate'] for a in algos]  # 丢包率
-    avg_render_fps = [data_dict[a][1]['avg_render_fps'] for a in algos]  # 平均渲染帧率
-    avg_bitrates = [data_dict[a][1]['avg_bitrate'] for a in algos]  # 平均比特率
-    p95_e2e_delays = [data_dict[a][1]['p95_e2e_delay'] if data_dict[a][1]['p95_e2e_delay'] > 0 else 0 for a in algos]  # P95端到端延迟
-    p95_network_delays = [data_dict[a][1]['p95_network_delay'] if data_dict[a][1]['p95_network_delay'] > 0 else 0 for a in algos]  # P95网络延迟
-    avg_pixels = [data_dict[a][1]['avg_pixels'] / 1e6 for a in algos]  # 平均像素数（百万）
-    resolution_changes = [data_dict[a][1]['resolution_changes'] for a in algos]  # 分辨率变化次数
+    metrics = [
+        ('freeze_count', [data_dict[a][1]['total_freeze_count'] for a in algos], 'Freeze Count', 'coral'),
+        ('freeze_duration', [data_dict[a][1]['total_freeze_duration'] / 1000.0 for a in algos], 'Freeze Duration (s)', 'lightcoral'),
+        ('freeze_rate', [data_dict[a][1]['freeze_rate'] for a in algos], 'Freeze Rate (%)', 'salmon'),
+        ('packet_loss', [data_dict[a][1]['packet_loss_rate'] for a in algos], 'Packet Loss Rate (%)', 'lightyellow'),
+        ('avg_fps', [data_dict[a][1]['avg_render_fps'] for a in algos], 'Average FPS', 'plum'),
+        ('avg_bitrate', [data_dict[a][1]['avg_bitrate'] for a in algos], 'Bitrate (Mbps)', 'lightcyan'),
+        ('p95_e2e_delay', [data_dict[a][1]['p95_e2e_delay'] if data_dict[a][1]['p95_e2e_delay'] > 0 else 0 for a in algos], 'E2E Delay P95 (ms)', 'lavender'),
+        ('p95_net_delay', [data_dict[a][1]['p95_network_delay'] if data_dict[a][1]['p95_network_delay'] > 0 else 0 for a in algos], 'Network Delay P95 (ms)', 'peachpuff'),
+        ('avg_pixels', [data_dict[a][1]['avg_pixels'] / 1e6 for a in algos], 'Resolution (MPixels)', 'lightblue'),
+    ]
     
-    fig, axes = plt.subplots(3, 3, figsize=(18, 12))
-    fig.suptitle('Quality of Experience (QoE) Metrics Comparison (Delay: P95)', fontsize=20, fontweight='bold')
-    
-    # 第一行：卡顿相关指标
-    # 1. 卡顿次数
-    axes[0, 0].bar(algos, freeze_counts, color='coral', alpha=0.8)
-    axes[0, 0].set_ylabel('Freeze Count', fontsize=12)
-    axes[0, 0].set_title('Video Freeze Count', fontsize=14, fontweight='bold')
-    axes[0, 0].grid(axis='y', alpha=0.3)
-    
-    # 2. 卡顿总时长
-    axes[0, 1].bar(algos, freeze_durations, color='lightcoral', alpha=0.8)
-    axes[0, 1].set_ylabel('Freeze Duration (s)', fontsize=12)
-    axes[0, 1].set_title('Total Freeze Duration', fontsize=14, fontweight='bold')
-    axes[0, 1].grid(axis='y', alpha=0.3)
-    
-    # 3. 卡顿率
-    axes[0, 2].bar(algos, freeze_rates, color='salmon', alpha=0.8)
-    axes[0, 2].set_ylabel('Freeze Rate (%)', fontsize=12)
-    axes[0, 2].set_title('Freeze Rate (Freeze Time / Total Time)', fontsize=14, fontweight='bold')
-    axes[0, 2].grid(axis='y', alpha=0.3)
-    
-    # 第二行：丢包、帧率、比特率
-    # 4. 丢包率
-    axes[1, 0].bar(algos, packet_loss_rates, color='lightyellow', alpha=0.8, edgecolor='orange')
-    axes[1, 0].set_ylabel('Packet Loss Rate (%)', fontsize=12)
-    axes[1, 0].set_title('Packet Loss Rate', fontsize=14, fontweight='bold')
-    axes[1, 0].grid(axis='y', alpha=0.3)
-    
-    # 5. 平均渲染帧率
-    axes[1, 1].bar(algos, avg_render_fps, color='plum', alpha=0.8)
-    axes[1, 1].set_ylabel('Average FPS', fontsize=12)
-    axes[1, 1].set_title('Average Render Frame Rate', fontsize=14, fontweight='bold')
-    axes[1, 1].grid(axis='y', alpha=0.3)
-    
-    # 6. 平均比特率
-    axes[1, 2].bar(algos, avg_bitrates, color='lightcyan', alpha=0.8, edgecolor='teal')
-    axes[1, 2].set_ylabel('Bitrate (Mbps)', fontsize=12)
-    axes[1, 2].set_title('Average Video Bitrate', fontsize=14, fontweight='bold')
-    axes[1, 2].grid(axis='y', alpha=0.3)
-    
-    # 第三行：两个延迟指标
-    # 7. P95端到端延迟
-    axes[2, 0].bar(algos, p95_e2e_delays, color='lavender', alpha=0.8, edgecolor='purple')
-    axes[2, 0].set_ylabel('E2E Delay P95 (ms)', fontsize=12)
-    axes[2, 0].set_title('P95 End-to-End Delay', fontsize=14, fontweight='bold')
-    axes[2, 0].grid(axis='y', alpha=0.3)
-    
-    # 8. P95网络延迟
-    axes[2, 1].bar(algos, p95_network_delays, color='peachpuff', alpha=0.8, edgecolor='darkorange')
-    axes[2, 1].set_ylabel('Network Delay P95 (ms)', fontsize=12)
-    axes[2, 1].set_title('P95 Network Delay', fontsize=14, fontweight='bold')
-    axes[2, 1].grid(axis='y', alpha=0.3)
-    
-    # 9. 平均分辨率（百万像素）
-    colors_res = ['lightblue' if rc == 0 else 'lightcoral' for rc in resolution_changes]
-    bars = axes[2, 2].bar(algos, avg_pixels, color=colors_res, alpha=0.8, edgecolor='navy')
-    axes[2, 2].set_ylabel('Resolution (MPixels)', fontsize=12)
-    axes[2, 2].set_title('Average Video Resolution', fontsize=14, fontweight='bold')
-    axes[2, 2].grid(axis='y', alpha=0.3)
-    
-    # 在柱状图上标注分辨率变化次数
-    for i, (bar, changes) in enumerate(zip(bars, resolution_changes)):
-        if changes > 0:
-            height = bar.get_height()
-            axes[2, 2].text(bar.get_x() + bar.get_width()/2., height,
-                          f'Δ{changes}',
-                          ha='center', va='bottom', fontsize=9, color='red', fontweight='bold')
-    
-    for ax in axes.flat:
-        if ax.get_visible():
-            ax.tick_params(axis='x', rotation=45)
-    
-    plt.tight_layout()
-    plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
-    print(f"✓ QoE指标图已保存: {output_path}")
-    plt.close()
+    for name, data, ylabel, color in metrics:
+        output_path = os.path.join(output_dir, f"bar_{name}.pdf")
+        save_single_bar_plot(algos, data, name, output_path, ylabel, color)
 
 
-def plot_custom_qoe(data_dict, output_path):
-    """
-    根据用户提供的公式绘制自定义 QoE 指标对比图
-    
-    公式:
-    - QoE_recv = 100 * U (U = bitrate / capacity)
-    - QoE_delay = 100 * (d_max - d_95th) / (d_max - d_min)
-    - QoE_loss = 100 * (1 - L)
-    - QoE_total = 0.2 * QoE_recv + 0.2 * QoE_delay + 0.3 * QoE_loss
-    """
+def plot_custom_qoe(data_dict, output_dir):
+    """绘制自定义 QoE 指标对比图（单张输出）"""
+    print(f"正在生成自定义 QoE 图...")
     algos = list(data_dict.keys())
     
     qoe_recv = [data_dict[a][1]['qoe_recv_rate'] for a in algos]
@@ -652,39 +624,16 @@ def plot_custom_qoe(data_dict, output_path):
     qoe_loss = [data_dict[a][1]['qoe_loss'] for a in algos]
     qoe_total = [data_dict[a][1]['qoe_total'] for a in algos]
     
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Custom QoE Metrics Comparison (Based on User Formulas)', fontsize=18, fontweight='bold')
-    
     metrics = [
-        (qoe_recv, 'QoE Recv Rate (100 * U)', 'Score', 'skyblue'),
-        (qoe_delay, 'QoE Delay (100 * (d_max - d_95) / (d_max - d_min))', 'Score', 'lightgreen'),
-        (qoe_loss, 'QoE Loss (100 * (1 - L))', 'Score', 'salmon'),
-        (qoe_total, 'Total QoE (0.2*R + 0.2*D + 0.3*L)', 'Score', 'gold')
+        ('qoe_recv', qoe_recv, 'Score', 'skyblue'),
+        ('qoe_delay', qoe_delay, 'Score', 'lightgreen'),
+        ('qoe_loss', qoe_loss, 'Score', 'salmon'),
+        ('qoe_total', qoe_total, 'Score', 'gold')
     ]
     
-    for idx, (data, title, ylabel, color) in enumerate(metrics):
-        row = idx // 2
-        col = idx % 2
-        ax = axes[row, col]
-        
-        bars = ax.bar(algos, data, color=color, alpha=0.8, edgecolor='black')
-        ax.set_title(title, fontsize=14, fontweight='bold')
-        ax.set_ylabel(ylabel)
-        ax.set_ylim(0, max(max(data) * 1.1, 100) if data else 110)
-        ax.grid(axis='y', linestyle='--', alpha=0.7)
-        
-        # 添加数值标签
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 1,
-                    f'{height:.1f}', ha='center', va='bottom', fontsize=10)
-        
-        ax.tick_params(axis='x', rotation=30)
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(output_path, format='pdf', bbox_inches='tight', dpi=300)
-    print(f"✓ 自定义 QoE 对比图已保存: {output_path}")
-    plt.close()
+    for name, data, ylabel, color in metrics:
+        output_path = os.path.join(output_dir, f"qoe_score_{name}.pdf")
+        save_single_bar_plot(algos, data, name, output_path, ylabel, color)
 
 
 # ============================================
@@ -772,132 +721,67 @@ def generate_report(data_dict, output_path, warmup=0):
             f.write("\n")
         
         f.write("=" * 100 + "\n")
-        f.write("\n数据来源说明:\n")
-        f.write("  - 所有指标均来自: video_receive_stream2.cc 视频层统计日志\n")
-        f.write("\n延迟指标说明:\n")
-        f.write("  - P95处理延迟: 接收端处理延迟的 95 分位值 (已剔除 3.0*IQR 以外的极端异常点)\n")
-        f.write("  - P95端到端延迟: 发送端到接收端的 95 分位完整延迟 (已剔除极端异常点)\n")
-        f.write("  - P95网络延迟: 网络传输的 95 分位延迟 (已剔除极端异常点)\n")
-        f.write("  - 注意: 所有的延迟指标现在均采用 95 分位值（P95），并预先通过 IQR 方法过滤了因系统卡顿或初始连接产生的极少数尖峰数据。\n")
-        f.write("\n丢包率计算:\n")
-        f.write("  - 公式: cum_loss / (cum_loss + packets_received) × 100%\n")
-        f.write("  - cum_loss: 累计丢失的包数（视频层统计）\n")
-        f.write("  - packets_received: 累计接收的包数（视频层统计）\n")
-        f.write("\n评分说明:\n")
-        f.write("  - QoE评分综合考虑: 帧率稳定性、延迟、卡顿次数/时长/率、丢包率、分辨率等因素\n")
-        f.write("  - 评分维度: 帧率(25分) + 延迟(20分) + 卡顿(25分) + 丢包(20分) + 分辨率(10分)\n")
-        f.write("  - 分辨率评分: 基于平均像素数(8分) + 分辨率稳定性(2分)\n")
-        f.write("    * 720p及以上: 8分, 480p(VGA): 6分, 360p: 4分\n")
-        f.write("    * 无分辨率变化: +2分, ≤2次变化: +1分\n")
-        f.write("  - 评分范围: 0-100，分数越高表示用户体验越好\n")
-        f.write("=" * 100 + "\n")
     
     print(f"✓ 统计报告已保存: {output_path}")
 
 
 def calculate_qoe_score(aggregated):
-    """
-    计算简单的QoE评分 (0-100)
-    
-    评分维度:
-    - 帧率 (25分): 接近30fps得分高
-    - 延迟 (20分): 延迟越低得分越高
-    - 卡顿 (25分): 无卡顿得满分
-    - 丢包 (20分): 无丢包得满分
-    - 分辨率 (10分): 分辨率越高得分越高，稳定性加分
-    """
+    """计算简单的QoE评分 (0-100)"""
     score = 0.0
     
     # 1. 帧率评分 (满分25)
     fps = aggregated['avg_render_fps']
-    if fps >= 30:
-        score += 25
-    elif fps >= 24:
-        score += 22
-    elif fps >= 20:
-        score += 18
-    elif fps >= 15:
-        score += 13
-    else:
-        score += max(0, fps / 30 * 25)
+    if fps >= 30: score += 25
+    elif fps >= 24: score += 22
+    elif fps >= 20: score += 18
+    elif fps >= 15: score += 13
+    else: score += max(0, fps / 30 * 25)
     
     # 2. 延迟评分 (满分20) - 基于 P95 延迟
     delay = aggregated['p95_delay']
-    if delay <= 50:
-        score += 20
-    elif delay <= 100:
-        score += 16
-    elif delay <= 150:
-        score += 12
-    elif delay <= 200:
-        score += 8
-    elif delay <= 300:
-        score += 6
-    else:
-        score += max(0, 20 - (delay - 300) / 30)
+    if delay <= 50: score += 20
+    elif delay <= 100: score += 16
+    elif delay <= 150: score += 12
+    elif delay <= 200: score += 8
+    elif delay <= 300: score += 6
+    else: score += max(0, 20 - (delay - 300) / 30)
     
     # 3. 卡顿评分 (满分25)
     freeze_count = aggregated['total_freeze_count']
     freeze_duration = aggregated['total_freeze_duration']
     freeze_rate = aggregated['freeze_rate']
     
-    if freeze_count == 0:
-        score += 25
-    elif freeze_count <= 2:
-        score += 20
-    elif freeze_count <= 5:
-        score += 15
-    elif freeze_count <= 10:
-        score += 10
-    else:
-        score += max(0, 25 - freeze_count * 2)
+    if freeze_count == 0: score += 25
+    elif freeze_count <= 2: score += 20
+    elif freeze_count <= 5: score += 15
+    elif freeze_count <= 10: score += 10
+    else: score += max(0, 25 - freeze_count * 2)
     
-    # 考虑卡顿时长和卡顿率
-    if freeze_duration > 5000:  # 超过5秒
-        score -= 8
-    if freeze_rate > 10:  # 卡顿率超过10%
-        score -= 6
-    elif freeze_rate > 5:  # 卡顿率超过5%
-        score -= 3
+    if freeze_duration > 5000: score -= 8
+    if freeze_rate > 10: score -= 6
+    elif freeze_rate > 5: score -= 3
     
     # 4. 丢包评分 (满分20) - 基于丢包率
     packet_loss_rate = aggregated['packet_loss_rate']
-    if packet_loss_rate == 0:
-        score += 20
-    elif packet_loss_rate < 0.5:
-        score += 18
-    elif packet_loss_rate < 1.0:
-        score += 15
-    elif packet_loss_rate < 2.0:
-        score += 12
-    elif packet_loss_rate < 5.0:
-        score += 8
-    else:
-        score += max(0, 20 - packet_loss_rate)
+    if packet_loss_rate == 0: score += 20
+    elif packet_loss_rate < 0.5: score += 18
+    elif packet_loss_rate < 1.0: score += 15
+    elif packet_loss_rate < 2.0: score += 12
+    elif packet_loss_rate < 5.0: score += 8
+    else: score += max(0, 20 - packet_loss_rate)
     
     # 5. 分辨率评分 (满分10)
     avg_pixels = aggregated['avg_pixels']
     resolution_changes = aggregated['resolution_changes']
     
-    # 根据像素数评分 (8分)
-    # 720p (1280x720 = 0.92M), 480p (640x480 = 0.31M), 360p (640x360 = 0.23M)
-    if avg_pixels >= 0.9:  # >= 720p
-        score += 8
-    elif avg_pixels >= 0.6:  # 接近 720p
-        score += 7
-    elif avg_pixels >= 0.3:  # 480p (VGA)
-        score += 6
-    elif avg_pixels >= 0.2:  # 360p
-        score += 4
-    else:  # < 360p
-        score += max(0, avg_pixels / 0.3 * 6)
+    if avg_pixels >= 0.9: score += 8
+    elif avg_pixels >= 0.6: score += 7
+    elif avg_pixels >= 0.3: score += 6
+    elif avg_pixels >= 0.2: score += 4
+    else: score += max(0, avg_pixels / 0.3 * 6)
     
-    # 分辨率稳定性评分 (2分)
-    if resolution_changes == 0:
-        score += 2  # 分辨率完全稳定
-    elif resolution_changes <= 2:
-        score += 1  # 轻微变化
-    # 否则不加分
+    if resolution_changes == 0: score += 2
+    elif resolution_changes <= 2: score += 1
     
     return min(100, max(0, score))
 
@@ -908,29 +792,39 @@ def calculate_qoe_score(aggregated):
 
 def main():
     parser = argparse.ArgumentParser(description='分析 VideoReceiveStream 统计数据')
-    # --- 新增参数 ---
-    parser.add_argument('--input', type=str, help='指定要分析的单个日志文件路径')
-    # ----------------
+    parser.add_argument('--input', type=str, help='指定要分析的日志文件夹路径')
     parser.add_argument('--smooth', action='store_true', help='启用平滑处理')
     parser.add_argument('--window', type=int, default=5, help='平滑窗口大小')
     parser.add_argument('--warmup', type=float, default=0, help='预热时间（秒），剔除开头的数据')
     args = parser.parse_args()
 
-    # ... 省略中间的 print ...
-
-    # --- 修改查找逻辑 ---
+    # 创建结果目录
+    if not os.path.exists(RESULT_DIR):
+        os.makedirs(RESULT_DIR)
+    
+    # 创建图片存放目录
+    FIGURES_DIR = os.path.join(RESULT_DIR, 'figures')
+    if not os.path.exists(FIGURES_DIR):
+        os.makedirs(FIGURES_DIR)
+        
+    # 查找日志文件
+    log_files = []
+    
     if args.input:
         if os.path.exists(args.input):
-            log_files = [args.input]
+            if os.path.isdir(args.input):
+                log_files = glob.glob(os.path.join(args.input, '*_receiver.log'))
+            elif os.path.isfile(args.input):
+                log_files = [args.input]
         else:
-            print(f"错误: 找不到文件 {args.input}")
+            print(f"错误: 找不到路径 {args.input}")
             return
     else:
-        # 保持原有的逻辑：查找 OUTPUT_DIR 下的所有文件
         log_files = glob.glob(os.path.join(OUTPUT_DIR, '*_receiver.log'))
     
     if not log_files:
-        print(f"错误: 在 {OUTPUT_DIR} 中没有找到日志文件")
+        search_path = args.input if args.input else OUTPUT_DIR
+        print(f"错误: 在 {search_path} 中没有找到日志文件 (*_receiver.log)")
         return
     
     print(f"找到 {len(log_files)} 个日志文件\n")
@@ -943,16 +837,12 @@ def main():
         print(f"处理: {algo_name}...")
         
         try:
-            # 解析视频统计数据
             parser = VideoStatsParser(log_file)
-            
             if not parser.video_stats:
                 print(f"  警告: 未找到视频统计数据\n")
                 continue
             
-            # 计算指标（丢包率从视频层的 cum_loss 和 packets_received 计算）
             time_series, aggregated = VideoMetrics.calculate_metrics(parser.video_stats, parser.bwe_stats, args.warmup)
-            
             if not time_series:
                 continue
                 
@@ -960,18 +850,7 @@ def main():
             
             print(f"  平均比特率: {aggregated['avg_bitrate']:.3f} Mbps")
             print(f"  平均帧率: {aggregated['avg_render_fps']:.1f} FPS")
-            print(f"  平均分辨率: {aggregated['resolution']} (变化次数: {aggregated['resolution_changes']})")
-            print(f"  处理延迟: Avg: {aggregated['avg_delay']:.2f} ms / P95: {aggregated['p95_delay']:.2f} ms")
-            
-            # 显示端到端延迟和网络延迟
-            if aggregated['p95_e2e_delay'] > 0:
-                print(f"  端到端延迟: Avg: {aggregated['avg_e2e_delay']:.2f} ms / P95: {aggregated['p95_e2e_delay']:.2f} ms")
-                print(f"  网络延迟: Avg: {aggregated['avg_network_delay']:.2f} ms / P95: {aggregated['p95_network_delay']:.2f} ms")
-            else:
-                print(f"  端到端延迟/网络延迟: 无有效数据")
-            
-            print(f"  卡顿次数: {aggregated['total_freeze_count']}, 卡顿率: {aggregated['freeze_rate']:.2f} %")
-            print(f"  丢包: {aggregated['total_packet_loss']} / {aggregated['total_packet_loss'] + aggregated['total_packets_received']}, 丢包率: {aggregated['packet_loss_rate']:.2f} %\n")
+            print(f"  丢包率: {aggregated['packet_loss_rate']:.2f} %\n")
             
         except Exception as e:
             print(f"  错误: {e}\n")
@@ -984,30 +863,24 @@ def main():
     print(f"成功处理 {len(data_dict)} 个算法的数据\n")
     print("=" * 100)
     print("生成图表和报告...")
+    print(f"图片将保存在: {FIGURES_DIR}")
     print("=" * 100 + "\n")
     
     # 生成图表
-    suffix = f"_smooth_w{args.window}" if args.smooth else ""
+    # 1. 基础时间序列图（单张）
+    plot_multi_metrics(data_dict, FIGURES_DIR, args.smooth, args.window)
     
-    # 1. 多指标对比图
-    multi_metrics_path = os.path.join(RESULT_DIR, f"video_multi_metrics{suffix}.pdf")
-    plot_multi_metrics(data_dict, multi_metrics_path, args.smooth, args.window)
+    # 2. 帧率对比图（单张）
+    plot_fps_comparison(data_dict, FIGURES_DIR, args.smooth, args.window)
     
-    # 2. 帧率对比图
-    fps_path = os.path.join(RESULT_DIR, f"video_fps_comparison{suffix}.pdf")
-    plot_fps_comparison(data_dict, fps_path, args.smooth, args.window)
+    # 3. 分辨率时间线图（单张）
+    plot_resolution_timeline(data_dict, FIGURES_DIR, args.smooth, args.window)
     
-    # 3. 分辨率时间线图
-    resolution_path = os.path.join(RESULT_DIR, f"video_resolution_timeline{suffix}.pdf")
-    plot_resolution_timeline(data_dict, resolution_path, args.smooth, args.window)
+    # 4. QoE指标图（单张）
+    plot_qoe_metrics(data_dict, FIGURES_DIR)
     
-    # 4. QoE指标图
-    qoe_path = os.path.join(RESULT_DIR, "video_qoe_metrics.pdf")
-    plot_qoe_metrics(data_dict, qoe_path)
-    
-    # 5. 自定义 QoE 对比图
-    custom_qoe_path = os.path.join(RESULT_DIR, "video_custom_qoe.pdf")
-    plot_custom_qoe(data_dict, custom_qoe_path)
+    # 5. 自定义 QoE 对比图（单张）
+    plot_custom_qoe(data_dict, FIGURES_DIR)
     
     # 6. 生成报告
     report_path = os.path.join(RESULT_DIR, "video_quality_report.txt")
@@ -1016,17 +889,12 @@ def main():
     print("\n" + "=" * 100)
     print("分析完成！")
     print("=" * 100)
-    print(f"\n结果保存在: {RESULT_DIR}/")
-    print("  - video_quality_report.txt               # 视频质量统计报告")
-    print(f"  - video_multi_metrics{suffix}.pdf            # 多指标对比图")
-    print(f"  - video_fps_comparison{suffix}.pdf           # 帧率对比图")
-    print(f"  - video_resolution_timeline{suffix}.pdf      # 分辨率时间线图")
-    print("  - video_qoe_metrics.pdf                  # QoE指标图（含分辨率）")
-    print("  - video_custom_qoe.pdf                   # 自定义 QoE 对比图")
-    print("\n使用提示:")
-    print("  python3 eval/eval_video_stats.py                    # 显示原始数据")
-    print("  python3 eval/eval_video_stats.py --smooth           # 使用平滑处理")
-    print("  python3 eval/eval_video_stats.py --smooth --window 10  # 自定义窗口")
+    print(f"\n图片保存在: {FIGURES_DIR}/")
+    print("  - ts_*.pdf             # 时间序列图 (Bitrate, Delay, Loss, etc.)")
+    print("  - fps_compare_*.pdf    # 帧率对比图")
+    print("  - resolution_*.pdf     # 分辨率变化图")
+    print("  - bar_*.pdf            # 柱状统计图")
+    print("  - qoe_score_*.pdf      # QoE 评分图")
     print()
 
 
